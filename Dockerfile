@@ -1,6 +1,5 @@
-# 22.04
-FROM ubuntu:jammy
-
+# 24.04
+FROM ubuntu:noble
 RUN apt-get update && apt-get install -y curl lsb-release
 RUN uname -a
 RUN lsb_release -a
