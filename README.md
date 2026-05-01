@@ -89,3 +89,72 @@ docker buildx build --platform linux/amd64 -t nextcloud-custom:latest nextcloud/
 docker buildx build --platform linux/arm64 -t nextcloud-custom:latest nextcloud/
 ```
 
+---
+
+### Backup & Restore
+
+Two helper scripts are provided in the `nextcloud/` folder.  
+They work from **outside** the containers using `docker compose exec` and standard
+Unix tools — no extra clients need to be installed on the host.
+
+#### Backup
+
+```bash
+cd nextcloud
+
+# Backup to the default ./backups/<timestamp>/ folder
+./backup.sh
+
+# Backup to a custom location
+./backup.sh /mnt/nas/nextcloud-backups
+# or via env
+BACKUP_DIR=/mnt/nas/nextcloud-backups ./backup.sh
+```
+
+Each run creates a timestamped sub-folder, e.g. `backups/20260501_120000/`, containing:
+
+| File | Contents |
+|---|---|
+| `postgres_nextcloud.sql.gz` | Full PostgreSQL dump (gzipped SQL) |
+| `nextcloud_config.tar.gz` | `config/` + `custom_apps/` directories |
+| `nextcloud_data.tar.gz` | All user files under `data/` |
+
+#### Restore
+
+```bash
+cd nextcloud
+
+# Restore from a specific backup folder
+./restore.sh ./backups/20260501_120000
+```
+
+The script will:
+1. Ask for confirmation before overwriting anything
+2. Enable Nextcloud **maintenance mode** automatically
+3. Drop & recreate the database, then replay the SQL dump
+4. Unpack config and user-data archives
+5. Run `occ upgrade` + `occ maintenance:repair`
+6. Disable maintenance mode
+
+#### Manual database-only commands
+
+If you only need to interact with the database (without the helper scripts):
+
+```bash
+# Dump only the database
+docker compose exec db \
+  pg_dump -U nextcloud nextcloud | gzip > backup.sql.gz
+
+# Restore only the database
+gunzip -c backup.sql.gz | docker compose exec -T db \
+  psql -U nextcloud nextcloud
+
+# Interactive psql shell
+docker compose exec db psql -U nextcloud nextcloud
+```
+
+> **Tip:** Add `./backup.sh` to your host's crontab for automated daily backups:
+> ```
+> 0 2 * * * /path/to/nextcloud/backup.sh /mnt/nas/nextcloud-backups >> /var/log/nc-backup.log 2>&1
+> ```
+
