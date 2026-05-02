@@ -30,6 +30,17 @@ jobs:
             type=semver,pattern={{version}},prefix=nc-
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
 
+      - name: Set up Docker
+        uses: docker/setup-docker-action@v4
+        with:
+          daemon-config: |
+            {
+              "debug": true,
+              "features": {
+                "containerd-snapshotter": true
+              }
+            }
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
