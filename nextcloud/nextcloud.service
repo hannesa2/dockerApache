@@ -7,10 +7,11 @@ After=docker.service network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/nextcloud
-ExecStart=/usr/bin/docker compose up -d --remove-orphans
-ExecStop=/usr/bin/docker compose down
+EnvironmentFile=/opt/nextcloud/.env
+ExecStartPre=/usr/bin/docker pull hannesa2/nextcloud:latest
+ExecStart=/usr/bin/docker compose --env-file /opt/nextcloud/.env up -d --remove-orphans
+ExecStop=/usr/bin/docker compose --env-file /opt/nextcloud/.env down
 TimeoutStartSec=300
 
 [Install]
 WantedBy=multi-user.target
-

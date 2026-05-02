@@ -30,7 +30,7 @@ services:
       - nextcloud_net
 
   nextcloud:
-    image: nextcloud:stable-apache
+    image: hannesa2/nextcloud:latest
     restart: unless-stopped
     depends_on:
       db:
