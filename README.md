@@ -158,3 +158,55 @@ docker compose exec db psql -U nextcloud nextcloud
 > 0 2 * * * /path/to/nextcloud/backup.sh /mnt/nas/nextcloud-backups >> /var/log/nc-backup.log 2>&1
 > ```
 
+---
+
+### Start on boot
+
+All services already have `restart: unless-stopped` — they auto-recover from crashes.
+What you additionally need depends on your OS:
+
+#### macOS (Docker Desktop)
+Enable **Start Docker Desktop at login**:
+> Docker Desktop → Settings → General → ✅ Start Docker Desktop at login
+
+That's it. The containers start automatically with Docker Desktop.
+
+#### Linux (systemd)
+A ready-made systemd unit file is provided at `nextcloud/nextcloud.service`.
+
+```bash
+# 1. Adjust WorkingDirectory inside the file to match your deploy path
+nano nextcloud/nextcloud.service
+
+# 2. Install and enable
+sudo cp nextcloud/nextcloud.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable nextcloud.service
+sudo systemctl start nextcloud.service
+
+# Check status
+sudo systemctl status nextcloud.service
+```
+
+#### Scan for manually added files
+
+If you copy files directly into the data directory on the host, tell Nextcloud to index them:
+
+```bash
+cd nextcloud
+
+# Scan one user
+docker compose exec --user www-data nextcloud php occ files:scan hannes
+
+# Scan all users
+docker compose exec --user www-data nextcloud php occ files:scan --all
+
+# Only scan new/changed files (faster on large libraries)
+docker compose exec --user www-data nextcloud php occ files:scan --all --unscanned
+```
+
+Files must be placed under:
+```
+$NEXTCLOUD_DATA_DIR/nextcloud/data/<username>/files/
+```
+
