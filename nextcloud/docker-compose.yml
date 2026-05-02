@@ -1,0 +1,72 @@
+version: "3.9"
+
+# Usage:
+#   NEXTCLOUD_DATA_DIR=/your/data/path docker compose up -d
+# Or copy .env.example to .env and adjust values before running:
+#   docker compose up -d
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    volumes:
+      - ${NEXTCLOUD_DATA_DIR:-./data}/postgres:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nextcloud}
+      POSTGRES_USER: ${POSTGRES_USER:-nextcloud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nextcloud}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nextcloud_net
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks:
+      - nextcloud_net
+
+  nextcloud:
+    image: nextcloud:stable-apache
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "${NEXTCLOUD_PORT:-8080}:80"
+    volumes:
+      - ${NEXTCLOUD_DATA_DIR:-./data}/nextcloud/html:/var/www/html
+      - ${NEXTCLOUD_DATA_DIR:-./data}/nextcloud/data:/var/www/html/data
+      - ${NEXTCLOUD_DATA_DIR:-./data}/nextcloud/config:/var/www/html/config
+      - ${NEXTCLOUD_DATA_DIR:-./data}/nextcloud/custom_apps:/var/www/html/custom_apps
+    environment:
+      # Database
+      POSTGRES_HOST: db
+      POSTGRES_DB: ${POSTGRES_DB:-nextcloud}
+      POSTGRES_USER: ${POSTGRES_USER:-nextcloud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+
+      # Nextcloud admin
+      NEXTCLOUD_ADMIN_USER: ${NEXTCLOUD_ADMIN_USER:-admin}
+      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD:-changeme}
+
+      # Nextcloud trusted domains (comma-separated)
+      NEXTCLOUD_TRUSTED_DOMAINS: ${NEXTCLOUD_TRUSTED_DOMAINS:-localhost}
+
+      # Redis for caching & locking
+      REDIS_HOST: redis
+
+      # PHP memory limit
+      PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-512M}
+      PHP_UPLOAD_LIMIT: ${PHP_UPLOAD_LIMIT:-10G}
+    networks:
+      - nextcloud_net
+
+networks:
+  nextcloud_net:
+    driver: bridge
