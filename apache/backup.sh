@@ -36,12 +36,12 @@ echo "    Saved: mysql_${MYSQL_DATABASE}.sql.gz"
 
 # ── 2. Web root ───────────────────────────────────────────────────────────────
 echo "==> Archiving web root ..."
-sudo LANG=C tar -czf "$BACKUP_PATH/www.tar.gz" -C "$APACHE_DATA_DIR" www
+sudo LANG=C tar -cvzf "$BACKUP_PATH/www.tar.gz" -C "$APACHE_DATA_DIR" www
 echo "    Saved: www.tar.gz"
 
 # ── 3. Vhost configs ──────────────────────────────────────────────────────────
 echo "==> Archiving vhost configs ..."
-sudo LANG=C tar -czf "$BACKUP_PATH/vhosts.tar.gz" -C "$APACHE_DATA_DIR" vhosts
+sudo LANG=C tar -cvzf "$BACKUP_PATH/vhosts.tar.gz" -C "$APACHE_DATA_DIR" vhosts
 echo "    Saved: vhosts.tar.gz"
 
 echo "==> Backup complete → $BACKUP_PATH"
