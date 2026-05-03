@@ -45,7 +45,7 @@ WWW_ARCHIVE="$BACKUP_PATH/www.tar.gz"
 if [ -f "$WWW_ARCHIVE" ]; then
     echo "==> Restoring web root ..."
     rm -rf "$APACHE_DATA_DIR/www"
-    LANG=C tar -xzf "$WWW_ARCHIVE" -C "$APACHE_DATA_DIR"
+    sudo LANG=C tar -xzf "$WWW_ARCHIVE" -C "$APACHE_DATA_DIR"
     echo "    Web root restored."
 fi
 
@@ -54,7 +54,7 @@ VHOST_ARCHIVE="$BACKUP_PATH/vhosts.tar.gz"
 if [ -f "$VHOST_ARCHIVE" ]; then
     echo "==> Restoring vhost configs ..."
     rm -rf "$APACHE_DATA_DIR/vhosts"
-    LANG=C tar -xzf "$VHOST_ARCHIVE" -C "$APACHE_DATA_DIR"
+    sudo LANG=C tar -xzf "$VHOST_ARCHIVE" -C "$APACHE_DATA_DIR"
     docker compose -f "$COMPOSE_FILE" restart apache
     echo "    Vhosts restored and Apache restarted."
 fi
