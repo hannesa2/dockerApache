@@ -17,8 +17,11 @@ cp .env.example .env
 mkdir -p data/www data/vhosts data/logs/apache data/mysql data/mysql-config
 cp vhost.conf data/vhosts/000-default.conf
 
-# 3. Start the stack
+# 3. Start the stack (builds the image automatically on first run)
 docker compose up -d
+
+# To force a rebuild after changing the Dockerfile:
+docker compose up -d --build
 
 # Open http://localhost:8081 (or the port you configured)
 # Note: Apache uses 8081 by default to avoid conflict with Nextcloud (8082)
@@ -86,6 +89,8 @@ docker buildx build --platform linux/amd64 -t apache-custom:latest apache/
 # arm64
 docker buildx build --platform linux/arm64 -t apache-custom:latest apache/
 ```
+
+> The image is built automatically by `docker compose up -d` from `apache/Dockerfile` — no pull from Docker Hub needed.
 
 ### Start on boot
 
