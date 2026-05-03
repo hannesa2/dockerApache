@@ -10,18 +10,27 @@ TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 BACKUP_PATH="$BACKUP_ROOT/$TIMESTAMP"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
 MYSQL_DATABASE="${MYSQL_DATABASE:-webapp}"
-MYSQL_USER="${MYSQL_USER:-webapp}"
-MYSQL_PASSWORD="${MYSQL_PASSWORD:-changeme_db}"
+MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-changeme_root}"
 APACHE_DATA_DIR="${APACHE_DATA_DIR:-$SCRIPT_DIR/data}"
+
+# Fix "Failed to set default locale" on macOS / minimal Linux environments
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
 
 echo "==> Backup started: $TIMESTAMP"
 echo "    Backup path : $BACKUP_PATH"
 mkdir -p "$BACKUP_PATH"
 
-# ── 1. MySQL dump ─────────────────────────────────────────────────────────────
+# ── 1. MySQL dump (root user + --no-tablespaces avoids PROCESS privilege) ─────
 echo "==> Dumping MySQL database '$MYSQL_DATABASE' ..."
 docker compose -f "$COMPOSE_FILE" exec -T db \
-    mysqldump -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" \
+    mysqldump \
+        -u root -p"$MYSQL_ROOT_PASSWORD" \
+        --no-tablespaces \
+        --single-transaction \
+        --routines \
+        --triggers \
+        "$MYSQL_DATABASE" \
     | gzip > "$BACKUP_PATH/mysql_${MYSQL_DATABASE}.sql.gz"
 echo "    Saved: mysql_${MYSQL_DATABASE}.sql.gz"
 
