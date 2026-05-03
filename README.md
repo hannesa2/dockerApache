@@ -17,6 +17,9 @@ cp .env.example .env
 mkdir -p data/www data/vhosts data/logs/apache data/mysql data/mysql-config
 cp vhost.conf data/vhosts/000-default.conf
 
+# 2.1 on MacOS, unlock the keychain to avoid "security: SecKeychainUnlock: The user name or passphrase you entered is not correct" errors when the container tries to access the mounted volumes
+security -v unlock-keychain ~/Library/Keychains/login.keychain-db
+
 # 3. Start the stack (builds the image automatically on first run)
 docker compose up -d
 
