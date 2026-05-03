@@ -36,12 +36,23 @@ echo "    Saved: mysql_${MYSQL_DATABASE}.sql.gz"
 
 # ── 2. Web root ───────────────────────────────────────────────────────────────
 echo "==> Archiving web root ..."
-sudo LANG=C tar -cvzf "$BACKUP_PATH/www.tar.gz" -C "$APACHE_DATA_DIR" www
+sudo LANG=C tar -cvzf "$BACKUP_PATH/www.tar.gz" -C "$APACHE_DATA_DIR" \
+    --exclude='www/.git' \
+    --exclude='www/.gitignore' \
+    --exclude='www/.svn' \
+    --exclude='www/*/.git' \
+    --exclude='www/*/node_modules' \
+    --exclude='www/*/.cache' \
+    --exclude='www/*/tmp' \
+    --exclude='www/*/cache' \
+    www | { grep '/$' || true; }
 echo "    Saved: www.tar.gz"
 
 # ── 3. Vhost configs ──────────────────────────────────────────────────────────
 echo "==> Archiving vhost configs ..."
-sudo LANG=C tar -cvzf "$BACKUP_PATH/vhosts.tar.gz" -C "$APACHE_DATA_DIR" vhosts
+sudo LANG=C tar -cvzf "$BACKUP_PATH/vhosts.tar.gz" -C "$APACHE_DATA_DIR" \
+    --exclude='vhosts/.git' \
+    vhosts | { grep '/$' || true; }
 echo "    Saved: vhosts.tar.gz"
 
 echo "==> Backup complete → $BACKUP_PATH"
