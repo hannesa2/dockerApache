@@ -2,6 +2,10 @@
 # restore.sh – Restore MySQL database + web root + vhost configs
 set -euo pipefail
 
+# Use POSIX locale – always available on macOS and Linux, silences tar/locale warnings
+export LC_ALL=C
+export LANG=C
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$SCRIPT_DIR/.env" ] && source "$SCRIPT_DIR/.env"
 
@@ -27,10 +31,10 @@ DB_DUMP="$BACKUP_PATH/mysql_${MYSQL_DATABASE}.sql.gz"
 if [ -f "$DB_DUMP" ]; then
     echo "==> Restoring MySQL database '$MYSQL_DATABASE' ..."
     docker compose -f "$COMPOSE_FILE" exec -T db \
-        mysql -u root -p"${MYSQL_ROOT_PASSWORD:-changeme_root}" \
+        mysql -u root -p"${MYSQL_ROOT_PASSWORD:-changeme_root}" 2>/dev/null \
         -e "DROP DATABASE IF EXISTS \`$MYSQL_DATABASE\`; CREATE DATABASE \`$MYSQL_DATABASE\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL ON \`$MYSQL_DATABASE\`.* TO '$MYSQL_USER'@'%';"
     gunzip -c "$DB_DUMP" | docker compose -f "$COMPOSE_FILE" exec -T db \
-        mysql -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"
+        mysql -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" 2>/dev/null
     echo "    Database restored."
 else
     echo "WARNING: $DB_DUMP not found – skipping."
@@ -41,7 +45,7 @@ WWW_ARCHIVE="$BACKUP_PATH/www.tar.gz"
 if [ -f "$WWW_ARCHIVE" ]; then
     echo "==> Restoring web root ..."
     rm -rf "$APACHE_DATA_DIR/www"
-    tar -xzf "$WWW_ARCHIVE" -C "$APACHE_DATA_DIR"
+    LANG=C tar -xzf "$WWW_ARCHIVE" -C "$APACHE_DATA_DIR"
     echo "    Web root restored."
 fi
 
@@ -50,7 +54,7 @@ VHOST_ARCHIVE="$BACKUP_PATH/vhosts.tar.gz"
 if [ -f "$VHOST_ARCHIVE" ]; then
     echo "==> Restoring vhost configs ..."
     rm -rf "$APACHE_DATA_DIR/vhosts"
-    tar -xzf "$VHOST_ARCHIVE" -C "$APACHE_DATA_DIR"
+    LANG=C tar -xzf "$VHOST_ARCHIVE" -C "$APACHE_DATA_DIR"
     docker compose -f "$COMPOSE_FILE" restart apache
     echo "    Vhosts restored and Apache restarted."
 fi
