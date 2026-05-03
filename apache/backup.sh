@@ -13,9 +13,9 @@ MYSQL_DATABASE="${MYSQL_DATABASE:-webapp}"
 MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-changeme_root}"
 APACHE_DATA_DIR="${APACHE_DATA_DIR:-$SCRIPT_DIR/data}"
 
-# Fix "Failed to set default locale" on macOS / minimal Linux environments
-export LANG=C.UTF-8
-export LC_ALL=C.UTF-8
+# Use POSIX locale – always available on macOS and Linux, silences tar/locale warnings
+export LC_ALL=C
+export LANG=C
 
 echo "==> Backup started: $TIMESTAMP"
 echo "    Backup path : $BACKUP_PATH"
@@ -36,12 +36,12 @@ echo "    Saved: mysql_${MYSQL_DATABASE}.sql.gz"
 
 # ── 2. Web root ───────────────────────────────────────────────────────────────
 echo "==> Archiving web root ..."
-tar -czf "$BACKUP_PATH/www.tar.gz" -C "$APACHE_DATA_DIR" www
+LANG=C tar -czf "$BACKUP_PATH/www.tar.gz" -C "$APACHE_DATA_DIR" www
 echo "    Saved: www.tar.gz"
 
 # ── 3. Vhost configs ──────────────────────────────────────────────────────────
 echo "==> Archiving vhost configs ..."
-tar -czf "$BACKUP_PATH/vhosts.tar.gz" -C "$APACHE_DATA_DIR" vhosts
+LANG=C tar -czf "$BACKUP_PATH/vhosts.tar.gz" -C "$APACHE_DATA_DIR" vhosts
 echo "    Saved: vhosts.tar.gz"
 
 echo "==> Backup complete → $BACKUP_PATH"
