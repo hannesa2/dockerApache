@@ -44,8 +44,11 @@ docker compose down
 # → safe here because all data lives outside via bind-mounts
 docker compose down -v
 
-# Restart
+# ⚠️  Restart – does NOT re-read .env changes
 docker compose restart
+
+# ✅  After changing .env, always use down + up to apply the new values:
+docker compose down && docker compose up -d
 
 # Stop a single service, e.g. only Nextcloud
 docker compose stop nextcloud
