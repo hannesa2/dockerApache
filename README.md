@@ -29,7 +29,9 @@ cp .env.example .env
 # 2. Start the stack
 docker compose up -d
 
-# Open http://localhost:8080 (or the port you configured)
+# Open http://localhost:8082 (or change NEXTCLOUD_PORT in .env)
+# Note: if running alongside the Apache stack, make sure ports don't conflict
+#       Apache defaults to 8081, Nextcloud to 8082
 ```
 
 ### Stop / restart the stack
