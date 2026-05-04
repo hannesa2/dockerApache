@@ -15,7 +15,14 @@ cp .env.example .env
 
 # 2. Create host directories and install the default vhost
 mkdir -p data/www data/vhosts data/logs/apache data/mysql data/mysql-config
-cp vhost.conf data/vhosts/000-default.conf
+
+# Copy sample files to get started immediately
+mkdir -p data/vhosts/
+mkdir -p data/www/
+cp sample-data/vhosts/000-default.conf data/vhosts/
+cp sample-data/www/index.php data/www/
+# Optional: second vhost example
+# cp sample-data/vhosts/myapp.conf data/vhosts/
 
 # 2.1 on MacOS, unlock the keychain to avoid "security: SecKeychainUnlock: The user name or passphrase you entered is not correct" errors when the container tries to access the mounted volumes
 security -v unlock-keychain ~/Library/Keychains/login.keychain-db
