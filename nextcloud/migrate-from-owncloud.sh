@@ -131,6 +131,22 @@ for USER in $USERS; do
         2>&1 | tee -a "$MIGRATION_LOG" | grep -E '(^sending|^deleting|/$|^sent)' || true
     log "    Files rsynced (files not in ownCloud source have been removed)."
 
+    # ── b2. Fix non-UTF8 filenames (Latin-1 → UTF-8) ─────────────────────────
+    # Old ownCloud/Windows filenames may contain ISO-8859-1 chars (ü,ö,ä,…)
+    # that PostgreSQL rejects. convmv renames them to proper UTF-8 in-place.
+    log "    Fixing non-UTF8 filenames with convmv ..."
+    if command -v convmv &>/dev/null; then
+        sudo convmv -f iso-8859-1 -t utf-8 -r --notest \
+            "$NC_USER_DIR/files/" 2>&1 \
+            | grep -v "^Skipping" \
+            | tee -a "$MIGRATION_LOG" || true
+        log "    convmv done."
+    else
+        log "    WARNING: convmv not found – skipping filename encoding fix."
+        log "             Install with: sudo apt install convmv"
+        log "             Then re-run or fix manually before the file scan."
+    fi
+
     # Fix ownership so www-data inside the container can read the files
     sudo chown -R www-data:root "$NC_USER_DIR" 2>/dev/null || \
         sudo chown -R 33:0 "$NC_USER_DIR" 2>/dev/null || true
