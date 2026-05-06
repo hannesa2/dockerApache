@@ -154,9 +154,10 @@ for USER in $USERS; do
     # ── c. Export contacts from ownCloud filesystem ───────────────────────────
     VCF_OUT="$SCRIPT_DIR/migration-contacts-${USER}.vcf"
     log "    Extracting contacts from ownCloud data directory ..."
+    set -x
     sudo find "$OC_USER_DIR" -path "*/addressbooks/*" -name "*.vcf" \
         -exec cat {} \; > "$VCF_OUT" 2>/dev/null || true
-
+    set +x
     if [ -s "$VCF_OUT" ]; then
         CONTACT_COUNT=$(grep -c "^BEGIN:VCARD" "$VCF_OUT" || echo 0)
         log "    Found $CONTACT_COUNT contacts → $VCF_OUT"
