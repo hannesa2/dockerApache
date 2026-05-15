@@ -121,23 +121,26 @@ sudo env LANG=C LC_ALL=C tar -czC "$NEXTCLOUD_DATA_DIR/nextcloud" config custom_
          rm -rf '$MIRROR_DATA_DIR/nextcloud/config' '$MIRROR_DATA_DIR/nextcloud/custom_apps' && \
          tar -xzC '$MIRROR_DATA_DIR/nextcloud'"
 
-# ── 4b. Patch config.php on mirror to use mirror's DB credentials ─────────────
-# The streamed config.php contains the SOURCE's dbpassword/dbuser which may
-# differ from what the MIRROR's PostgreSQL was initialised with.
-# We overwrite those three keys with the values from this .env so the mirror
-# can always connect to its own database.
-POSTGRES_PASSWORD_ESC="${POSTGRES_PASSWORD//\//\\/}"   # escape forward slashes for sed
-POSTGRES_USER_ESC="${POSTGRES_USER//\//\\/}"
-log "    Patching mirror config.php with correct DB credentials ..."
-remote "CFGFILE='$MIRROR_DATA_DIR/nextcloud/config/config.php'; \
-    if [ -f \"\$CFGFILE\" ]; then \
-        sed -i.bak \
-            -e \"s/'dbuser' => '[^']*'/'dbuser' => '${POSTGRES_USER_ESC}'/\" \
-            -e \"s/'dbpassword' => '[^']*'/'dbpassword' => '${POSTGRES_PASSWORD_ESC}'/\" \
-            \"\$CFGFILE\" && rm -f \"\${CFGFILE}.bak\" && echo 'config.php patched'; \
-    else \
-        echo 'WARNING: config.php not found on mirror, skipping patch'; \
-    fi"
+# ── 4b. Patch config.php on mirror ────────────────────────────────────────────
+# Remove source-specific redirect overrides and update DB credentials so the
+# mirror connects to its own PostgreSQL.
+# Uses grep -v (universally available) + perl env-var trick (no quoting hell).
+log "    Patching mirror config.php (DB creds, removing redirect overrides) ..."
+MIRROR_CFG="$MIRROR_DATA_DIR/nextcloud/config/config.php"
+ssh -p "$MIRROR_SSH_PORT" "${MIRROR_USER}@${MIRROR_HOST}" \
+    "export PATH='${MIRROR_EXTRA_PATH}:/usr/local/bin:/usr/bin:/bin'
+     CFG='${MIRROR_CFG}'
+     [ -f \"\$CFG\" ] || { echo 'WARNING: config.php not found on mirror, skipping patch'; exit 0; }
+     # 1. Remove source-specific redirect / overwrite keys
+     TMPF=\$(mktemp)
+     grep -v -E \"'(overwritehost|overwriteprotocol|overwritewebroot)'\" \"\$CFG\" > \"\$TMPF\" && mv \"\$TMPF\" \"\$CFG\"
+     # 2+3. Patch dbuser and dbpassword – pass values via env vars to avoid quoting issues
+     NC_DB_USER='${POSTGRES_USER}' NC_DB_PASS='${POSTGRES_PASSWORD}' perl -i -pe '
+         s|(.\x27dbuser\x27\s*=>\s*\x27)[^\x27]*(\x27)|\$1\$ENV{NC_DB_USER}\$2|;
+         s|(.\x27dbpassword\x27\s*=>\s*\x27)[^\x27]*(\x27)|\$1\$ENV{NC_DB_PASS}\$2|;
+     ' \"\$CFG\"
+     echo 'config.php patched OK'
+    "
 log "    Config synced."
 
 # ── 5. Rsync user data incrementally (no temp files, no compression overhead) ─
@@ -194,6 +197,13 @@ fi
 log "==> Running occ upgrade + repair on mirror ..."
 remote "docker compose -f '$MIRROR_COMPOSE' exec -T --user www-data nextcloud php occ upgrade 2>/dev/null || true && \
         docker compose -f '$MIRROR_COMPOSE' exec -T --user www-data nextcloud php occ maintenance:repair 2>/dev/null || true"
+
+# Ensure localhost and the mirror hostname are trusted on the mirror instance
+log "==> Setting trusted_domains on mirror (localhost + $MIRROR_HOST) ..."
+remote "docker compose -f '$MIRROR_COMPOSE' exec -T --user www-data nextcloud \
+    php occ config:system:set trusted_domains 0 --value='localhost' 2>/dev/null || true"
+remote "docker compose -f '$MIRROR_COMPOSE' exec -T --user www-data nextcloud \
+    php occ config:system:set trusted_domains 1 --value='$MIRROR_HOST' 2>/dev/null || true"
 
 log "==> Disabling maintenance mode on mirror ..."
 remote "docker compose -f '$MIRROR_COMPOSE' exec -T --user www-data nextcloud php occ maintenance:mode --off 2>/dev/null || true"
