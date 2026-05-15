@@ -145,11 +145,11 @@ log "    Config synced."
 
 # ── 5. Rsync user data incrementally (no temp files, no compression overhead) ─
 log "==> Rsyncing user data source → mirror (incremental) ..."
-rsync -av --delete \
+sudo rsync -av --delete \
     -e "ssh -p $MIRROR_SSH_PORT" \
     "$NEXTCLOUD_DATA_DIR/nextcloud/data/" \
     "${MIRROR_USER}@${MIRROR_HOST}:${MIRROR_DATA_DIR}/nextcloud/data/" \
-    2>&1 | tee -a "$LOG" | grep -E '(^sending|^deleting|/$|^sent|^total)' || true
+    2>&1 | tee -a "$LOG" | grep -E '(^sending|^deleting|/$|^sent|^total)'
 log "    User data synced."
 
 # ── 6. Down + up mirror Nextcloud so html/ is (re-)populated by the entrypoint ─
