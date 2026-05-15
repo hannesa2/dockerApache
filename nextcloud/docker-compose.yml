@@ -58,6 +58,12 @@ services:
       # Nextcloud trusted domains (comma-separated)
       NEXTCLOUD_TRUSTED_DOMAINS: ${NEXTCLOUD_TRUSTED_DOMAINS:-localhost}
 
+      # Reverse proxy / URL overrides (needed when behind nginx/Apache HTTPS proxy)
+      OVERWRITEHOST: ${OVERWRITEHOST:-}
+      OVERWRITEPROTOCOL: ${OVERWRITEPROTOCOL:-}
+      OVERWRITECLIURL: ${OVERWRITECLIURL:-}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+
       # Redis for caching & locking
       REDIS_HOST: redis
 
