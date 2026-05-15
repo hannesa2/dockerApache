@@ -73,6 +73,9 @@ dockerApache/
 - Use `sudo mkdir -p`, `sudo rsync`, `sudo chown -R www-data:root` for data dirs.
 - Use `tee -a "$LOG"` to stream output to both screen and log file.
 - `convmv -f iso-8859-1 -t utf-8 -r --notest` after rsync to fix Latin-1 filenames.
+- Scripts that use `sudo` **must be run directly on the server** (interactive login
+  or cron), not via a non-interactive `ssh host './script.sh'` pipe — sudo requires
+  a terminal or cached credentials.
 
 ### Backup / restore pattern
 - Backups: timestamped sub-folders under `./backups/YYYYMMDD_HHMMSS/`.
@@ -136,6 +139,59 @@ On **Linux** use the host's LAN IP for `ProxyPass` (not `host.docker.internal`).
 
 ---
 
+## Mirror sync (`sync-to-mirror.sh`)
+
+### Topology
+| Role | Host | OS | Data path |
+|------|------|----|-----------|
+| **Source** (production) | `latitude` | Ubuntu Linux | `NEXTCLOUD_DATA_DIR=/media/hannes/T5` |
+| **Mirror** (standby) | `mac2016` | macOS | `MIRROR_DATA_DIR=/Volumes/SamsungT1` |
+
+The script is **always run on the source server** (`latitude`).  
+It SSHes into the mirror (`mac2016`) to run Docker Compose commands there.
+
+### What it does (in order)
+1. Enable maintenance mode on source
+2. Enable maintenance mode on mirror (suppress errors if not yet set up)
+3. Stream PostgreSQL dump source → mirror via SSH pipe (`pg_dump | ssh | psql`)
+4. Stream `config/` + `custom_apps/` via tar pipe; patch `config.php` on mirror
+   (strips `overwritehost`/`overwriteprotocol`, updates DB credentials)
+5. Rsync `data/` incrementally source → mirror (`sudo rsync` — data owned by `www-data`)
+6. `docker compose down && docker compose up -d` on mirror so the entrypoint
+   re-populates `html/`; wait up to 20 min for `versioncheck.php` to appear
+7. `occ upgrade` + `occ maintenance:repair` on mirror
+8. Set `trusted_domains` on mirror to `localhost` + `$MIRROR_HOST`
+9. Disable maintenance mode on mirror, then on source
+
+### Key `.env` variables for sync
+```dotenv
+MIRROR_HOST=mac2016               # SSH hostname of the mirror
+MIRROR_USER=hannes                # SSH user on the mirror
+MIRROR_SSH_PORT=22
+MIRROR_NEXTCLOUD_DIR=/Users/hannes/git/dockerApache/nextcloud  # compose dir on mirror
+MIRROR_DATA_DIR=/Volumes/SamsungT1  # data root on mirror (if different from compose dir)
+MIRROR_EXTRA_PATH=/usr/local/bin    # prepended to PATH on mirror (Docker Desktop on macOS)
+MIRROR_SHELL=zsh                    # login shell on mirror (zsh for macOS, bash for Linux)
+```
+
+### Running the sync
+```bash
+# On the source server (must be an interactive/sudo-capable session):
+cd ~/git/dockerApache/nextcloud
+./sync-to-mirror.sh
+
+# Or via cron (credentials must be cached or passwordless sudo configured):
+0 3 * * * /home/hannes/git/dockerApache/nextcloud/sync-to-mirror.sh
+```
+
+> **Important:** `sync-to-mirror.sh` uses `sudo rsync` to read the `www-data`-owned
+> data directory. It must be run in a session where `sudo` can authenticate
+> (interactive login with cached credentials). Running it via a non-interactive
+> `ssh latitude './sync-to-mirror.sh'` will fail with
+> *"sudo: a terminal is required to read the password"*.
+
+---
+
 ## ownCloud migration
 `nextcloud/migrate-from-owncloud.sh` handles:
 1. User discovery via `occ user:list` (or filesystem scan fallback).
@@ -153,4 +209,3 @@ OWNCLOUD_URL=http://localhost/owncloud
 OWNCLOUD_ADMIN_USER=admin
 OWNCLOUD_ADMIN_PASSWORD=secret
 ```
-
