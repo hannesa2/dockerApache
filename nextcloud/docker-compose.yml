@@ -4,6 +4,14 @@ version: "3.9"
 #   NEXTCLOUD_DATA_DIR=/your/data/path docker compose up -d
 # Or copy .env.example to .env and adjust values before running:
 #   docker compose up -d
+#
+# Split-DNS / NAT-loopback (Fritz!Box):
+#   If mobile clients on the same LAN get Fritz!Box's error page instead of
+#   Nextcloud, enable the dnsmasq service:
+#     DNSMASQ_ENABLED=true   (in .env)
+#   Then point Fritz!Box or mobile DNS to latitude's LAN IP.
+#   dnsmasq answers nextcloud.<your-domain> → NEXTCLOUD_LOCAL_IP and
+#   forwards all other queries upstream (Fritz!Box / 192.168.178.1).
 
 services:
   db:
@@ -70,6 +78,28 @@ services:
       # PHP memory limit
       PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-512M}
       PHP_UPLOAD_LIMIT: ${PHP_UPLOAD_LIMIT:-10G}
+    networks:
+      - nextcloud_net
+
+  # ── Optional: split-DNS for NAT-loopback workaround ──────────────────────
+  # Enable by setting DNSMASQ_ENABLED=true in .env.
+  # Clients that use latitude as their DNS server will resolve
+  # OVERWRITEHOST → NEXTCLOUD_LOCAL_IP directly, bypassing Fritz!Box NAT.
+  dnsmasq:
+    image: drewonthenet/dnsmasq:latest
+    restart: unless-stopped
+    profiles:
+      - split-dns
+    ports:
+      - "${NEXTCLOUD_LOCAL_IP:-0.0.0.0}:53:53/udp"
+      - "${NEXTCLOUD_LOCAL_IP:-0.0.0.0}:53:53/tcp"
+    cap_add:
+      - NET_ADMIN
+    command: >
+      --no-resolv
+      --server=${DNS_UPSTREAM:-192.168.178.1}
+      --address=/${OVERWRITEHOST:-nextcloud.example.com}/${NEXTCLOUD_LOCAL_IP:-127.0.0.1}
+      --log-queries
     networks:
       - nextcloud_net
 
