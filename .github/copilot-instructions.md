@@ -28,6 +28,7 @@ dockerApache/
 │   ├── .env.example
 │   ├── backup.sh               # Backup MySQL + web root + vhosts
 │   ├── restore.sh              # Restore from backup
+│   ├── migrate-native-to-docker.sh # One-shot migration from native Apache+MySQL
 │   ├── VHOST_SAMPLE.md         # Virtual host setup guide
 │   └── sample-data/            # Sample vhost configs and index.php
 │       ├── vhosts/
@@ -259,3 +260,64 @@ OWNCLOUD_URL=http://localhost/owncloud
 OWNCLOUD_ADMIN_USER=admin
 OWNCLOUD_ADMIN_PASSWORD=secret
 ```
+
+---
+
+## Apache stack – native-to-Docker migration
+
+`apache/migrate-native-to-docker.sh` handles a one-shot migration of existing
+native Apache + MySQL websites into the Docker Apache stack.
+
+### Sites migrated (latitude server)
+
+| Native docroot | Docker www subdir | New (copy) domain |
+|----------------|-------------------|-------------------|
+| `/srv/www/vhosts/dev.mxtracks` | `dev.mxtracks` | `devcopy.mxtracks.info` |
+| `/srv/www/vhosts/mxdocs` | `mxdocs` | `wwwcopy.mxtracks.info` |
+
+Native and Docker stacks run **side-by-side** during the transition period:
+- Native Apache remains on ports 80/443, serving the original domains.
+- Docker container runs on ports 8081/8444; native Apache proxies the *copy* domains to it.
+
+### What the script does
+1. `docker compose up -d --build` – starts the stack (safe to re-run).
+2. `sudo rsync` each web root into `$APACHE_DATA_DIR/www/<subdir>/`.
+3. `convmv` pass to fix any ISO-8859-1 filenames.
+4. `mysqldump` each database via the native MySQL WordPress user.
+5. Creates DB + user in Docker MySQL (`CREATE DATABASE IF NOT EXISTS …`).
+6. Imports the dump via the Docker MySQL root user.
+7. Patches `wp-config.php`: `DB_HOST localhost` → `db` (Docker service name).
+8. Writes a Docker vhost config into `$APACHE_DATA_DIR/vhosts/<domain>.conf`.
+9. Writes a native-Apache reverse-proxy snippet (`native-proxy-<domain>.conf`).
+10. `apache2ctl graceful` inside the container to pick up new vhosts.
+
+### Running the migration
+```bash
+# On latitude (interactive session – sudo required):
+cd ~/git/dockerApache/apache
+cp .env.example .env   # set MYSQL_ROOT_PASSWORD to a strong password
+./migrate-native-to-docker.sh
+```
+
+### Post-migration steps (printed by the script)
+```bash
+sudo a2enmod proxy proxy_http
+sudo cp native-proxy-devcopy.mxtracks.info.conf /etc/apache2/sites-available/
+sudo a2ensite devcopy.mxtracks.info.conf
+sudo certbot --apache -d devcopy.mxtracks.info
+sudo apache2ctl configtest && sudo systemctl reload apache2
+```
+
+### Multi-database approach
+`MYSQL_DATABASE` in `.env` creates one initial DB. The migration script creates
+additional databases (`wordpress`, `wordpress_mxtracks`) directly via the root
+user after the container starts — no extra `docker-compose.yml` changes needed.
+
+### WordPress URL fix
+After DNS points to the new domain, run per site:
+```bash
+docker compose exec apache wp --path=/var/www/html/<subdir>/wordpress \
+  search-replace 'https://<old-domain>' 'https://<new-domain>' \
+  --all-tables --skip-columns=guid
+```
+
