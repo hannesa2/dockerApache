@@ -215,3 +215,45 @@ Files must be placed under:
 $NEXTCLOUD_DATA_DIR/nextcloud/data/<username>/files/
 ```
 
+---
+
+### LAN access / Fritz!Box NAT hairpinning fix
+
+When Nextcloud is behind a Fritz!Box and you access it via the public domain
+(`nextcloud.mxtracks.info`) **from inside the same home WiFi**, Fritz!Box
+intercepts the request instead of forwarding it — you get a Fritz!Box error page.
+
+**Fix: start the optional `dnsmasq` split-DNS service** so LAN devices resolve
+the domain to latitude's **local IP** instead of the public one.
+
+```bash
+# Add to nextcloud/.env:
+NEXTCLOUD_LOCAL_IP=192.168.178.129          # latitude's LAN IPv4
+NEXTCLOUD_LOCAL_IPV6=fdf4:be15:...          # latitude's LAN IPv6 (ip -6 addr show scope global)
+DNS_UPSTREAM=8.8.8.8                        # upstream DNS (not Fritz!Box – avoids loop)
+
+# Start dnsmasq
+docker compose --profile split-dns up -d
+```
+
+Then in Fritz!Box **Internet → Zugangsdaten → DNS-Server**:
+- *Bevorzugter DNSv4-Server*  : `192.168.178.129`
+- *Alternativer DNSv4-Server* : `8.8.8.8`
+
+Keep the **DNS-Rebind-Schutz** exception for `nextcloud.mxtracks.info` in place
+(Heimnetz → Netzwerk → DNS-Rebind-Schutz).
+
+#### Android: disable Private DNS — must be "Off", not "Automatic"
+
+Android 9+ has a **Private DNS** feature that bypasses the network DNS:
+
+> Settings → Network & internet → Advanced → **Private DNS** → set to **Off**
+
+⚠️ **"Automatic" is NOT enough** — Fritz!Box supports DNS-over-TLS (DoT) on
+port 853. When Private DNS is set to *Automatic*, Android connects to Fritz!Box's
+DoT port directly, and Fritz!Box handles those queries **internally** without
+going through dnsmasq. The result: `nextcloud.mxtracks.info` still resolves to
+the public IP and the Fritz!Box error page reappears.
+
+Only **"Off"** forces Android to use plain UDP/TCP DNS via Fritz!Box → dnsmasq → local IP.
+

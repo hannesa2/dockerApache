@@ -139,6 +139,43 @@ On **Linux** use the host's LAN IP for `ProxyPass` (not `host.docker.internal`).
 
 ---
 
+## Fritz!Box NAT hairpinning / split DNS
+
+Fritz!Box does **not** support NAT loopback. When a LAN device accesses
+`nextcloud.mxtracks.info`, its DNS resolves to the public IP → the request
+hits Fritz!Box's own HTTPS interface → Fritz!Box returns its error page.
+
+### Fix: split DNS with the optional dnsmasq service
+
+```
+┌─ home WiFi ─────────────────────────────────────────────┐
+│  mobile → DNS query: nextcloud.mxtracks.info            │
+│         ← dnsmasq on latitude: 192.168.178.129  ✓      │
+│  mobile → HTTPS 192.168.178.129:443 (reverse proxy)     │
+│         ← Nextcloud  ✓                                  │
+└─────────────────────────────────────────────────────────┘
+```
+
+1. In `.env` set `NEXTCLOUD_LOCAL_IP=192.168.178.129` (latitude's LAN IP).
+2. Start dnsmasq: `docker compose --profile split-dns up -d`
+3. **Network-wide** – in Fritz!Box under **Internet → Zugangsdaten → DNS-Server**:
+   - *Bevorzugter DNSv4-Server*  : `192.168.178.129` (latitude / dnsmasq)
+   - *Alternativer DNSv4-Server* : `8.8.8.8` (Google DNS, fallback if latitude is down)
+   - Set `DNS_UPSTREAM=8.8.8.8` in `.env` — **not** `192.168.178.1` (Fritz!Box),
+     which would create an infinite loop: Fritz!Box → dnsmasq → Fritz!Box → …  
+   **Per-device** – set the phone's WiFi DNS to `192.168.178.129`;
+   with per-device config `DNS_UPSTREAM=192.168.178.1` is fine (no loop).
+4. The Fritz!Box **DNS-Rebind-Schutz** exception for `nextcloud.mxtracks.info`
+   must remain in place (it allows the private-IP DNS response to pass through).
+5. On Android set **Private DNS → Off** (not "Automatic").
+   Fritz!Box supports DoT on port 853; "Automatic" makes Android use Fritz!Box's
+   DoT resolver which handles queries *internally*, bypassing dnsmasq entirely.
+
+dnsmasq answers `nextcloud.mxtracks.info → 192.168.178.129` and forwards all
+other queries to `DNS_UPSTREAM`, so normal internet DNS is unaffected.
+
+---
+
 ## Mirror sync (`sync-to-mirror.sh`)
 
 ### Topology

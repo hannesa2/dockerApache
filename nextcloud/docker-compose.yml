@@ -82,26 +82,37 @@ services:
       - nextcloud_net
 
   # ── Optional: split-DNS for NAT-loopback workaround ──────────────────────
-  # Enable by setting DNSMASQ_ENABLED=true in .env.
   # Clients that use latitude as their DNS server will resolve
   # OVERWRITEHOST → NEXTCLOUD_LOCAL_IP directly, bypassing Fritz!Box NAT.
+  # Uses host networking so dnsmasq binds the LAN interface directly
+  # (avoids Docker UDP proxy issues).
   dnsmasq:
-    image: drewonthenet/dnsmasq:latest
+    image: alpine:3.19
     restart: unless-stopped
     profiles:
       - split-dns
-    ports:
-      - "${NEXTCLOUD_LOCAL_IP:-0.0.0.0}:53:53/udp"
-      - "${NEXTCLOUD_LOCAL_IP:-0.0.0.0}:53:53/tcp"
+    network_mode: host
     cap_add:
       - NET_ADMIN
-    command: >
-      --no-resolv
-      --server=${DNS_UPSTREAM:-192.168.178.1}
-      --address=/${OVERWRITEHOST:-nextcloud.example.com}/${NEXTCLOUD_LOCAL_IP:-127.0.0.1}
-      --log-queries
-    networks:
-      - nextcloud_net
+    environment:
+      DNS_UPSTREAM: ${DNS_UPSTREAM:-8.8.8.8}
+      OVERWRITEHOST: ${OVERWRITEHOST:-nextcloud.example.com}
+      NEXTCLOUD_LOCAL_IP: ${NEXTCLOUD_LOCAL_IP:-127.0.0.1}
+      NEXTCLOUD_LOCAL_IPV6: ${NEXTCLOUD_LOCAL_IPV6:-}
+    entrypoint: []
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        apk add --no-cache dnsmasq >/dev/null 2>&1 &&
+        exec dnsmasq --no-daemon --no-resolv
+        --listen-address=$$NEXTCLOUD_LOCAL_IP
+        --bind-interfaces
+        --server=$$DNS_UPSTREAM
+        --address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IP
+        --address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IPV6
+        --filter-rr=HTTPS
+        --log-queries --log-facility=-
 
 networks:
   nextcloud_net:
