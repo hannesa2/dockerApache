@@ -218,7 +218,7 @@ cd ~/git/dockerApache/nextcloud
 ./sync-to-mirror.sh
 
 # Or via cron (credentials must be cached or passwordless sudo configured):
-0 3 * * * /home/hannes/git/dockerApache/nextcloud/sync-to-mirror.sh
+0 3 * * * /home/hannes/git/dockerApache/nextcloud/sync-to-mirror.sh >> /var/log/nc-mirror-$(date +\%Y\%m\%d).log 2>&1
 ```
 
 > **Important:** `sync-to-mirror.sh` uses `sudo rsync` to read the `www-data`-owned

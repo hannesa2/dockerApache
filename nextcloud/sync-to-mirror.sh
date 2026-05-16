@@ -217,5 +217,5 @@ log "═════════════════════════
 log "==> Sync complete. Log: $LOG"
 log ""
 log "Tip: Add to crontab for nightly sync:"
-log "  0 3 * * * /path/to/nextcloud/sync-to-mirror.sh >> /var/log/nc-mirror.log 2>&1"
+log "  0 3 * * * /path/to/nextcloud/sync-to-mirror.sh >> /var/log/nc-mirror-\$(date +\%Y\%m\%d).log 2>&1"
 
