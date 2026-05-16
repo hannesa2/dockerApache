@@ -81,6 +81,38 @@ services:
     networks:
       - nextcloud_net
 
+  # ── Optional: DNS-over-TLS (DoT) frontend for Android Private DNS ────────
+  # Wraps dnsmasq with TLS on port 853 using the existing Let's Encrypt cert.
+  # Android "Private DNS" → nextcloud.mxtracks.info (DoT) → this container
+  #   → dnsmasq:53 → local IP for the Nextcloud domain.
+  #
+  # Requires:
+  #   - split-dns profile active (dnsmasq must be running on port 53)
+  #   - DOT_CERT_DIR in .env pointing to the Let's Encrypt live directory
+  #   - Fritz!Box port-forward:  853 TCP → 192.168.178.129:853
+  #
+  # Start both together:
+  #   docker compose --profile split-dns --profile dot up -d
+  coredns-dot:
+    image: coredns/coredns:1.11.3
+    restart: unless-stopped
+    profiles:
+      - dot
+    user: root
+    ports:
+      - "853:853/tcp"
+    environment:
+      NEXTCLOUD_LOCAL_IP: ${NEXTCLOUD_LOCAL_IP:-192.168.178.129}
+      DOT_CERT_DIR: ${DOT_CERT_DIR:-/etc/letsencrypt/live/nextcloud.mxtracks.info-0002}
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./Corefile.dot:/Corefile:ro
+    command:
+      - -conf
+      - /Corefile
+    networks:
+      - nextcloud_net
+
   # ── Optional: split-DNS for NAT-loopback workaround ──────────────────────
   # Clients that use latitude as their DNS server will resolve
   # OVERWRITEHOST → NEXTCLOUD_LOCAL_IP directly, bypassing Fritz!Box NAT.
@@ -112,9 +144,12 @@ services:
           --address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IP
           --filter-rr=HTTPS
           --log-queries --log-facility=-"
-        # Only add AAAA record when an IPv6 address is configured
+        # When an IPv6 address is configured: also listen on it and return AAAA
+        # This allows Fritz!Box DNSv6-Server to point here as well,
+        # so AAAA queries for OVERWRITEHOST are answered with the local ULA address
+        # instead of the public IPv6 (which Android would prefer via Happy Eyeballs).
         if [ -n "$$NEXTCLOUD_LOCAL_IPV6" ]; then
-          ARGS="$$ARGS --address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IPV6"
+          ARGS="$$ARGS --listen-address=$$NEXTCLOUD_LOCAL_IPV6 --address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IPV6"
         fi
         exec dnsmasq $$ARGS
 

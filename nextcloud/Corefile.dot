@@ -1,0 +1,8 @@
+tls://.:853 {
+    tls {$DOT_CERT_DIR}/fullchain.pem {$DOT_CERT_DIR}/privkey.pem
+    forward . {$NEXTCLOUD_LOCAL_IP}:53
+    log
+}
+
+
+
