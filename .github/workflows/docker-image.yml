@@ -28,7 +28,7 @@ jobs:
         with:
           images: hannesa2/android-ndk
       - name: Set up Docker
-        uses: docker/setup-docker-action@v4
+        uses: docker/setup-docker-action@v5
         with:
           daemon-config: |
             {
