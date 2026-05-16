@@ -103,16 +103,20 @@ services:
     command:
       - /bin/sh
       - -c
-      - >-
-        apk add --no-cache dnsmasq >/dev/null 2>&1 &&
-        exec dnsmasq --no-daemon --no-resolv
-        --listen-address=$$NEXTCLOUD_LOCAL_IP
-        --bind-interfaces
-        --server=$$DNS_UPSTREAM
-        --address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IP
-        --address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IPV6
-        --filter-rr=HTTPS
-        --log-queries --log-facility=-
+      - |
+        apk add --no-cache dnsmasq >/dev/null 2>&1
+        ARGS="--no-daemon --no-resolv
+          --listen-address=$$NEXTCLOUD_LOCAL_IP
+          --bind-interfaces
+          --server=$$DNS_UPSTREAM
+          --address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IP
+          --filter-rr=HTTPS
+          --log-queries --log-facility=-"
+        # Only add AAAA record when an IPv6 address is configured
+        if [ -n "$$NEXTCLOUD_LOCAL_IPV6" ]; then
+          ARGS="$$ARGS --address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IPV6"
+        fi
+        exec dnsmasq $$ARGS
 
 networks:
   nextcloud_net:
