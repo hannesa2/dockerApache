@@ -4,6 +4,14 @@ version: "3.9"
 #   NEXTCLOUD_DATA_DIR=/your/data/path docker compose up -d
 # Or copy .env.example to .env and adjust values before running:
 #   docker compose up -d
+#
+# Split-DNS / NAT-loopback (Fritz!Box):
+#   If mobile clients on the same LAN get Fritz!Box's error page instead of
+#   Nextcloud, enable the dnsmasq service:
+#     DNSMASQ_ENABLED=true   (in .env)
+#   Then point Fritz!Box or mobile DNS to latitude's LAN IP.
+#   dnsmasq answers nextcloud.<your-domain> → NEXTCLOUD_LOCAL_IP and
+#   forwards all other queries upstream (Fritz!Box / 192.168.178.1).
 
 services:
   db:
@@ -58,6 +66,12 @@ services:
       # Nextcloud trusted domains (comma-separated)
       NEXTCLOUD_TRUSTED_DOMAINS: ${NEXTCLOUD_TRUSTED_DOMAINS:-localhost}
 
+      # Reverse proxy / URL overrides (needed when behind nginx/Apache HTTPS proxy)
+      OVERWRITEHOST: ${OVERWRITEHOST:-}
+      OVERWRITEPROTOCOL: ${OVERWRITEPROTOCOL:-}
+      OVERWRITECLIURL: ${OVERWRITECLIURL:-}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+
       # Redis for caching & locking
       REDIS_HOST: redis
 
@@ -66,6 +80,78 @@ services:
       PHP_UPLOAD_LIMIT: ${PHP_UPLOAD_LIMIT:-10G}
     networks:
       - nextcloud_net
+
+  # ── Optional: DNS-over-TLS (DoT) frontend for Android Private DNS ────────
+  # Wraps dnsmasq with TLS on port 853 using the existing Let's Encrypt cert.
+  # Android "Private DNS" → nextcloud.mxtracks.info (DoT) → this container
+  #   → dnsmasq:53 → local IP for the Nextcloud domain.
+  #
+  # Requires:
+  #   - split-dns profile active (dnsmasq must be running on port 53)
+  #   - DOT_CERT_DIR in .env pointing to the Let's Encrypt live directory
+  #   - Fritz!Box port-forward:  853 TCP → 192.168.178.129:853
+  #
+  # Start both together:
+  #   docker compose --profile split-dns --profile dot up -d
+  coredns-dot:
+    image: coredns/coredns:1.11.3
+    restart: unless-stopped
+    profiles:
+      - dot
+    user: root
+    ports:
+      - "853:853/tcp"
+    environment:
+      NEXTCLOUD_LOCAL_IP: ${NEXTCLOUD_LOCAL_IP:-192.168.178.129}
+      DOT_CERT_DIR: ${DOT_CERT_DIR:-/etc/letsencrypt/live/nextcloud.mxtracks.info-0002}
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./Corefile.dot:/Corefile:ro
+    command:
+      - -conf
+      - /Corefile
+    networks:
+      - nextcloud_net
+
+  # ── Optional: split-DNS for NAT-loopback workaround ──────────────────────
+  # Clients that use latitude as their DNS server will resolve
+  # OVERWRITEHOST → NEXTCLOUD_LOCAL_IP directly, bypassing Fritz!Box NAT.
+  # Uses host networking so dnsmasq binds the LAN interface directly
+  # (avoids Docker UDP proxy issues).
+  dnsmasq:
+    image: alpine:3.19
+    restart: unless-stopped
+    profiles:
+      - split-dns
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    environment:
+      DNS_UPSTREAM: ${DNS_UPSTREAM:-8.8.8.8}
+      OVERWRITEHOST: ${OVERWRITEHOST:-nextcloud.example.com}
+      NEXTCLOUD_LOCAL_IP: ${NEXTCLOUD_LOCAL_IP:-127.0.0.1}
+      NEXTCLOUD_LOCAL_IPV6: ${NEXTCLOUD_LOCAL_IPV6:-}
+    entrypoint: []
+    command:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache dnsmasq >/dev/null 2>&1
+        ARGS="--no-daemon --no-resolv
+          --listen-address=$$NEXTCLOUD_LOCAL_IP
+          --bind-interfaces
+          --server=$$DNS_UPSTREAM
+          --address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IP
+          --filter-rr=HTTPS
+          --log-queries --log-facility=-"
+        # When an IPv6 address is configured: also listen on it and return AAAA
+        # This allows Fritz!Box DNSv6-Server to point here as well,
+        # so AAAA queries for OVERWRITEHOST are answered with the local ULA address
+        # instead of the public IPv6 (which Android would prefer via Happy Eyeballs).
+        if [ -n "$$NEXTCLOUD_LOCAL_IPV6" ]; then
+          ARGS="$$ARGS --listen-address=$$NEXTCLOUD_LOCAL_IPV6 --address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IPV6"
+        fi
+        exec dnsmasq $$ARGS
 
 networks:
   nextcloud_net:

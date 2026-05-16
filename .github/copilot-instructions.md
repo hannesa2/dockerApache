@@ -73,6 +73,9 @@ dockerApache/
 - Use `sudo mkdir -p`, `sudo rsync`, `sudo chown -R www-data:root` for data dirs.
 - Use `tee -a "$LOG"` to stream output to both screen and log file.
 - `convmv -f iso-8859-1 -t utf-8 -r --notest` after rsync to fix Latin-1 filenames.
+- Scripts that use `sudo` **must be run directly on the server** (interactive login
+  or cron), not via a non-interactive `ssh host './script.sh'` pipe — sudo requires
+  a terminal or cached credentials.
 
 ### Backup / restore pattern
 - Backups: timestamped sub-folders under `./backups/YYYYMMDD_HHMMSS/`.
@@ -136,6 +139,109 @@ On **Linux** use the host's LAN IP for `ProxyPass` (not `host.docker.internal`).
 
 ---
 
+## Fritz!Box NAT hairpinning / split DNS
+
+Fritz!Box does **not** support NAT loopback. When a LAN device accesses
+`nextcloud.mxtracks.info`, its DNS resolves to the public IP → the request
+hits Fritz!Box's own HTTPS interface → Fritz!Box returns its error page.
+
+### Fix: split DNS with the optional dnsmasq service
+
+```
+┌─ home WiFi ─────────────────────────────────────────────┐
+│  mobile → DNS query direct to dnsmasq (192.168.178.129) │
+│         ← 192.168.178.129  ✓  (A + AAAA overridden)    │
+│  mobile → HTTPS 192.168.178.129:443 (reverse proxy)     │
+│         ← Nextcloud  ✓                                  │
+└─────────────────────────────────────────────────────────┘
+```
+
+1. In `.env`:
+   ```dotenv
+   NEXTCLOUD_LOCAL_IP=192.168.178.129          # latitude LAN IPv4
+   NEXTCLOUD_LOCAL_IPV6=fdf4:be15:98e0:...     # latitude stable ULA IPv6
+   DNS_UPSTREAM=8.8.8.8                        # upstream for all other queries
+   ```
+2. Start dnsmasq: `docker compose --profile split-dns up -d`
+3. The Fritz!Box **DNS-Rebind-Schutz** exception for `nextcloud.mxtracks.info`
+   must remain in place (Heimnetz → Netzwerk → DNS-Rebind-Schutz).
+4. On Android set **Private DNS → Off** (not "Automatic").
+   Fritz!Box supports DoT on port 853; "Automatic" makes Android use Fritz!Box's
+   DoT resolver which handles queries *internally*, bypassing dnsmasq entirely.
+
+### ⚠️ Fritz!Box-wide DNS-Server setting does NOT work for this setup
+
+`nextcloud.mxtracks.info` is a CNAME to `*.myfritz.net` (Fritz!Box's own
+MyFRITZ DDNS domain). Fritz!Box resolves `*.myfritz.net` **internally** —
+it never forwards those queries to the configured upstream DNS. Even with
+*Bevorzugter DNSv4-Server* = `192.168.178.129`, Fritz!Box "sees through" the
+CNAME and returns its public IP directly.
+
+**The only reliable fix is per-device DNS on Android:**
+
+> WiFi settings → long-press network → Modify → Advanced →
+> IP settings: **Static** → **DNS 1**: `192.168.178.129`, **DNS 2**: `8.8.8.8`
+
+This bypasses Fritz!Box's resolver entirely and talks straight to dnsmasq.
+
+dnsmasq overrides both A (IPv4) and AAAA (IPv6) records for `OVERWRITEHOST`
+and forwards all other queries to `DNS_UPSTREAM`, so normal internet DNS is unaffected.
+
+---
+
+## Mirror sync (`sync-to-mirror.sh`)
+
+### Topology
+| Role | Host | OS | Data path |
+|------|------|----|-----------|
+| **Source** (production) | `latitude` | Ubuntu Linux | `NEXTCLOUD_DATA_DIR=/media/hannes/T5` |
+| **Mirror** (standby) | `mac2016` | macOS | `MIRROR_DATA_DIR=/Volumes/SamsungT1` |
+
+The script is **always run on the source server** (`latitude`).  
+It SSHes into the mirror (`mac2016`) to run Docker Compose commands there.
+
+### What it does (in order)
+1. Enable maintenance mode on source
+2. Enable maintenance mode on mirror (suppress errors if not yet set up)
+3. Stream PostgreSQL dump source → mirror via SSH pipe (`pg_dump | ssh | psql`)
+4. Stream `config/` + `custom_apps/` via tar pipe; patch `config.php` on mirror
+   (strips `overwritehost`/`overwriteprotocol`, updates DB credentials)
+5. Rsync `data/` incrementally source → mirror (`sudo rsync` — data owned by `www-data`)
+6. `docker compose down && docker compose up -d` on mirror so the entrypoint
+   re-populates `html/`; wait up to 20 min for `versioncheck.php` to appear
+7. `occ upgrade` + `occ maintenance:repair` on mirror
+8. Set `trusted_domains` on mirror to `localhost` + `$MIRROR_HOST`
+9. Disable maintenance mode on mirror, then on source
+
+### Key `.env` variables for sync
+```dotenv
+MIRROR_HOST=mac2016               # SSH hostname of the mirror
+MIRROR_USER=hannes                # SSH user on the mirror
+MIRROR_SSH_PORT=22
+MIRROR_NEXTCLOUD_DIR=/Users/hannes/git/dockerApache/nextcloud  # compose dir on mirror
+MIRROR_DATA_DIR=/Volumes/SamsungT1  # data root on mirror (if different from compose dir)
+MIRROR_EXTRA_PATH=/usr/local/bin    # prepended to PATH on mirror (Docker Desktop on macOS)
+MIRROR_SHELL=zsh                    # login shell on mirror (zsh for macOS, bash for Linux)
+```
+
+### Running the sync
+```bash
+# On the source server (must be an interactive/sudo-capable session):
+cd ~/git/dockerApache/nextcloud
+./sync-to-mirror.sh
+
+# Or via cron (credentials must be cached or passwordless sudo configured):
+0 3 * * * /home/hannes/git/dockerApache/nextcloud/sync-to-mirror.sh >> /var/log/nc-mirror-$(date +\%Y\%m\%d).log 2>&1
+```
+
+> **Important:** `sync-to-mirror.sh` uses `sudo rsync` to read the `www-data`-owned
+> data directory. It must be run in a session where `sudo` can authenticate
+> (interactive login with cached credentials). Running it via a non-interactive
+> `ssh latitude './sync-to-mirror.sh'` will fail with
+> *"sudo: a terminal is required to read the password"*.
+
+---
+
 ## ownCloud migration
 `nextcloud/migrate-from-owncloud.sh` handles:
 1. User discovery via `occ user:list` (or filesystem scan fallback).
@@ -153,4 +259,3 @@ OWNCLOUD_URL=http://localhost/owncloud
 OWNCLOUD_ADMIN_USER=admin
 OWNCLOUD_ADMIN_PASSWORD=secret
 ```
-

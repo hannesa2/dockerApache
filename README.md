@@ -215,3 +215,101 @@ Files must be placed under:
 $NEXTCLOUD_DATA_DIR/nextcloud/data/<username>/files/
 ```
 
+---
+
+### LAN access / Fritz!Box NAT hairpinning fix
+
+When Nextcloud is behind a Fritz!Box and you access it via the public domain
+(`nextcloud.mxtracks.info`) **from inside the same home WiFi**, Fritz!Box
+intercepts the request instead of forwarding it — you get a Fritz!Box error page.
+
+**Fix: start the optional `dnsmasq` split-DNS service** so LAN devices resolve
+the domain to latitude's **local IP** instead of the public one.
+
+```bash
+# Add to nextcloud/.env:
+NEXTCLOUD_LOCAL_IP=192.168.178.129          # latitude's LAN IPv4
+NEXTCLOUD_LOCAL_IPV6=fdf4:be15:...          # latitude's LAN IPv6 (ip -6 addr show scope global)
+DNS_UPSTREAM=8.8.8.8                        # upstream DNS (not Fritz!Box – avoids loop)
+
+# Start dnsmasq
+docker compose --profile split-dns up -d
+```
+
+Keep the **DNS-Rebind-Schutz** exception for `nextcloud.mxtracks.info` in place
+(Heimnetz → Netzwerk → DNS-Rebind-Schutz).
+
+#### ⚠️ Fritz!Box-wide DNS setting does NOT work for MyFRITZ domains
+
+Setting *Bevorzugter DNSv4-Server* to `192.168.178.129` in
+**Internet → Zugangsdaten → DNS-Server** is **not enough** when the Nextcloud
+domain is a CNAME pointing to `*.myfritz.net`:
+
+```
+nextcloud.mxtracks.info.  CNAME  xyqvgh0pmfs04c1b.myfritz.net.
+```
+
+Fritz!Box resolves its own MyFRITZ hostnames **internally** — it never forwards
+those queries to our dnsmasq. Clients must query dnsmasq directly:
+
+---
+
+#### Fix A — Per-device: static DNS in Android WiFi settings
+
+Android 10 and earlier:
+> Settings → Wi-Fi → **long-press** network → Modify network → Advanced options
+> → IP settings: **Static** → DNS 1: `192.168.178.129`
+
+Android 12 – 16 (new UI, long-press removed):
+> Settings → Network & internet → Internet → tap the **⚙️ gear icon** next to
+> your Wi-Fi network → tap the **✏️ pencil icon** (top-right) → IP settings:
+> **Static** → DNS 1: `192.168.178.129`, DNS 2: `8.8.8.8`
+
+Also set **Private DNS → Off** (Settings → Network & internet → Private DNS).
+
+---
+
+#### Fix B — Android Private DNS with DoT (works on ALL Android versions)
+
+Android's *Private DNS* feature uses **DNS-over-TLS (DoT)** on port 853.
+Point it at `nextcloud.mxtracks.info` — Android resolves that hostname via
+Fritz!Box (gets the public IP), connects to port 853, Fritz!Box forwards it to
+latitude's CoreDNS service (which holds the valid Let's Encrypt cert), and from
+then on all DNS goes through dnsmasq → local IP. ✓
+
+**One-time setup:**
+
+1. Add to `nextcloud/.env`:
+   ```dotenv
+   DOT_CERT_DIR=/etc/letsencrypt/live/nextcloud.mxtracks.info-0002
+   ```
+
+2. Start both services:
+   ```bash
+   docker compose --profile split-dns --profile dot up -d
+   ```
+
+3. In Fritz!Box → **Heimnetz → Portfreigaben**: add a port forward:
+   - Protocol: **TCP**
+   - External port: **853**
+   - Internal host: **192.168.178.129** (latitude)
+   - Internal port: **853**
+
+4. On Android:
+   > Settings → Network & internet → **Private DNS**
+   > → *Private DNS provider hostname* → `nextcloud.mxtracks.info`
+
+No static IP needed — works automatically on home WiFi **and** over mobile data.
+
+---
+
+#### IPv6 / Happy Eyeballs
+
+Android prefers IPv6. Without an AAAA override in dnsmasq, Android receives
+the public IPv6 address and bypasses local routing. Set `NEXTCLOUD_LOCAL_IPV6`
+in `.env` to latitude's stable ULA IPv6 address:
+
+```bash
+# Find latitude's stable ULA address (scope global, not temporary):
+ip -6 addr show scope global | grep -v temporary
+```
