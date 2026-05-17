@@ -2,8 +2,10 @@
 data
 .env
 
-# Migration script outputs – generated at runtime, not source files
+# Migration / sync script outputs – generated at runtime, not source files
 apache/native-proxy-*.conf
 apache/migrate-*.sql.gz
 apache/migrate-*.log
+apache/sync-mirror-*.log
 nextcloud/migrate-*.log
+nextcloud/sync-mirror-*.log
