@@ -29,6 +29,7 @@ dockerApache/
 │   ├── backup.sh               # Backup MySQL + web root + vhosts
 │   ├── restore.sh              # Restore from backup
 │   ├── migrate-native-to-docker.sh # One-shot migration from native Apache+MySQL
+│   ├── sync-to-mirror.sh       # Live stream source → mirror (no temp files)
 │   ├── VHOST_SAMPLE.md         # Virtual host setup guide
 │   └── sample-data/            # Sample vhost configs and index.php
 │       ├── vhosts/
@@ -319,5 +320,56 @@ After DNS points to the new domain, run per site:
 docker compose exec apache wp --path=/var/www/html/<subdir>/wordpress \
   search-replace 'https://<old-domain>' 'https://<new-domain>' \
   --all-tables --skip-columns=guid
+```
+
+---
+
+## Apache stack – mirror sync
+
+`apache/sync-to-mirror.sh` streams the running Docker Apache+WordPress stack from
+the source server (latitude) to a standby mirror (mac2016).
+
+### Topology
+| Role | Host | OS | Data path |
+|------|------|----|-----------|
+| **Source** (production) | `latitude` | Ubuntu Linux | `APACHE_DATA_DIR=/srv/www.docker` |
+| **Mirror** (standby) | `mac2016` | macOS | `MIRROR_DATA_DIR=~/git/dockerApache/apache/data` |
+
+### Site mapping
+| Source domain | Mirror domain | DB | www subdir |
+|---------------|--------------|-----|------------|
+| `devcopy.mxtracks.info` | `dev16.mxtracks.info` | `wordpress` | `dev.mxtracks` |
+| `wwwcopy.mxtracks.info` | `www16.mxtracks.info` | `wordpress_mxtracks` | `mxdocs` |
+
+### What it does (per site)
+1. Prepares / starts mirror Docker stack (starts Docker Desktop on macOS if needed)
+2. Drops + recreates DB on mirror, streams `mysqldump` source → mirror via SSH pipe
+3. `rsync --delete` web root source → mirror (incremental, no temp files)
+4. Patches `wp-config.php` on mirror (`WP_HOME`, `WP_SITEURL`, `DB_HOST`, HTTPS proxy detection)
+5. Sets `siteurl` / `home` WordPress options directly in mirror DB
+6. Writes mirror vhost config into `MIRROR_DATA_DIR/vhosts/<domain>.conf`
+7. `apache2ctl graceful` inside mirror container
+
+### Running
+```bash
+# On latitude (interactive session):
+cd ~/git/dockerApache/apache
+./sync-to-mirror.sh
+
+# Nightly cron:
+0 3 * * * /home/hannes/git/dockerApache/apache/sync-to-mirror.sh >> /var/log/apache-mirror-$(date +\%Y\%m\%d).log 2>&1
+```
+
+### Key `.env` variables for sync
+```dotenv
+MIRROR_HOST=mac2016
+MIRROR_USER=hannes
+MIRROR_SSH_PORT=22
+MIRROR_APACHE_DIR=~/git/dockerApache/apache
+MIRROR_DATA_DIR=~/git/dockerApache/apache/data
+MIRROR_MYSQL_ROOT_PASSWORD=changeme_root
+MIRROR_HTTP_PORT=8080
+MIRROR_EXTRA_PATH=/usr/local/bin    # Docker Desktop on macOS
+MIRROR_SHELL=zsh
 ```
 
