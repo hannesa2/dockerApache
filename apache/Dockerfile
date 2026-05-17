@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxml2-dev \
         curl \
         unzip \
+        rsync \
         procps \
     && docker-php-ext-configure gd --with-jpeg --with-webp \
     && docker-php-ext-install -j"$(nproc)" \
@@ -27,6 +28,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         opcache \
         xml \
     && rm -rf /var/lib/apt/lists/*
+
+# Install WP-CLI (works with www-data user for wp commands)
+RUN curl -sL https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar \
+      -o /usr/local/bin/wp \
+    && chmod +x /usr/local/bin/wp
 
 # Enable useful Apache modules
 RUN a2enmod rewrite headers deflate expires

@@ -1,3 +1,9 @@
 .idea
 data
 .env
+
+# Migration script outputs – generated at runtime, not source files
+apache/native-proxy-*.conf
+apache/migrate-*.sql.gz
+apache/migrate-*.log
+nextcloud/migrate-*.log

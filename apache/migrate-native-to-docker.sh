@@ -137,19 +137,37 @@ SQL
         mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$NATIVE_DB"
   log "    Import done."
 
-  # ── 5. Patch wp-config.php: localhost → db ────────────────────────────────
+  # ── 5. Patch wp-config.php: DB_HOST + hardcoded WP_SITEURL/WP_HOME ──────
   log ""
-  log "==> 5. Patching wp-config.php DB_HOST ..."
+  log "==> 5. Patching wp-config.php ..."
+  # Detect old domain from the native vhost ServerName
+  NATIVE_DOMAIN="$(basename "$NATIVE_DOCROOT" | sed 's/\./\\./g')"  # escaped for sed
   for wp_config in \
       "$DOCKER_DOCROOT/wp-config.php" \
       "$DOCKER_DOCROOT/wordpress/wp-config.php"; do
     if [ -f "$wp_config" ]; then
+      # DB_HOST: localhost → db (Docker service name)
       sudo sed -i "s/'DB_HOST', 'localhost'/'DB_HOST', 'db'/g" "$wp_config"
+      # WP_SITEURL / WP_HOME constants (if hardcoded, override DB values and break migration)
+      sudo sed -i \
+        -e "s|'WP_SITEURL', 'https://[^']*'|'WP_SITEURL', 'https://${NEW_DOMAIN}/wordpress'|g" \
+        -e "s|'WP_HOME', 'https://[^']*'|'WP_HOME', 'https://${NEW_DOMAIN}/wordpress'|g" \
+        -e "s|'WP_SITEURL', 'http://[^']*'|'WP_SITEURL', 'https://${NEW_DOMAIN}/wordpress'|g" \
+        -e "s|'WP_HOME', 'http://[^']*'|'WP_HOME', 'https://${NEW_DOMAIN}/wordpress'|g" \
+        "$wp_config"
+      # HTTPS detection behind reverse proxy (prevents mixed-content / broken CSS)
+      if ! grep -q 'HTTP_X_FORWARDED_PROTO' "$wp_config"; then
+        sudo sed -i \
+          "s|<?php|<?php\n// Detect HTTPS behind reverse proxy (set by native Apache)\nif (isset(\$_SERVER['HTTP_X_FORWARDED_PROTO']) \&\& 'https' === \$_SERVER['HTTP_X_FORWARDED_PROTO']) {\n    \$_SERVER['HTTPS'] = 'on';\n}|" \
+          "$wp_config"
+      fi
       log "    Patched: $wp_config"
+      # Show resulting URL constants
+      grep -E 'WP_SITEURL|WP_HOME|DB_HOST' "$wp_config" | tee -a "$LOG" || true
     fi
   done
 
-  # ── 6. Write Docker vhost config ──────────────────────────────────────────
+  # ── 6. Write Docker vhost config ──────��───────────────────────────────────
   log ""
   log "==> 6. Writing Docker vhost config ..."
   sudo mkdir -p "$APACHE_DATA_DIR/vhosts"
@@ -177,21 +195,52 @@ VHOST
   log "==> 7. Writing native reverse-proxy snippet ..."
   PROXY_SNIPPET="$SCRIPT_DIR/native-proxy-${NEW_DOMAIN}.conf"
   cat > "$PROXY_SNIPPET" <<PROXY
-# ─── Reverse proxy: ${NEW_DOMAIN} → Docker container ───
-# Add this to /etc/apache2/sites-available/${NEW_DOMAIN}.conf
-# then:
-#   sudo a2enmod proxy proxy_http
-#   sudo a2ensite ${NEW_DOMAIN}.conf
-#   certbot --apache -d ${NEW_DOMAIN}   # get SSL cert + HTTPS redirect
-#   sudo apache2ctl configtest && sudo systemctl reload apache2
+# ─── Reverse proxy: ${NEW_DOMAIN} → Docker container ─────��────────────────
+# 1. sudo mkdir -p /var/www/certbot-webroot
+# 2. sudo cp this file /etc/apache2/sites-available/${NEW_DOMAIN}.conf
+# 3. sudo a2enmod proxy proxy_http ssl rewrite
+# 4. sudo a2ensite ${NEW_DOMAIN}.conf && sudo systemctl reload apache2
+# 5. sudo certbot certonly --webroot -w /var/www/certbot-webroot -d ${NEW_DOMAIN}
+# 6. Uncomment the HTTPS block below, enable HTTP→HTTPS redirect, reload Apache.
 
 <VirtualHost *:80>
     ServerName ${NEW_DOMAIN}
+
+    # ACME challenge – served locally, not proxied to Docker (required for renewals too)
+    Alias /.well-known/acme-challenge/ /var/www/certbot-webroot/.well-known/acme-challenge/
+    <Directory /var/www/certbot-webroot/.well-known/acme-challenge/>
+        Require all granted
+    </Directory>
+    ProxyPass /.well-known/acme-challenge/ !
+
+    # After SSL cert is obtained: replace proxy below with HTTPS redirect:
+    # RewriteEngine On
+    # RewriteRule ^ https://%{SERVER_NAME}%{REQUEST_URI} [END,NE,R=permanent]
+
+    # Temporary HTTP proxy (remove after HTTPS block is active)
     ProxyPreserveHost On
     ProxyPass        / http://127.0.0.1:${APACHE_HTTP_PORT}/
     ProxyPassReverse / http://127.0.0.1:${APACHE_HTTP_PORT}/
-    # Certbot will insert the HTTPS redirect automatically
 </VirtualHost>
+
+# Uncomment after certbot certonly succeeds:
+#<VirtualHost *:443>
+#    ServerName ${NEW_DOMAIN}
+#    SSLEngine On
+#    SSLCertificateFile    /etc/letsencrypt/live/${NEW_DOMAIN}/fullchain.pem
+#    SSLCertificateKeyFile /etc/letsencrypt/live/${NEW_DOMAIN}/privkey.pem
+#    Include /etc/letsencrypt/options-ssl-apache.conf
+#
+#    Alias /.well-known/acme-challenge/ /var/www/certbot-webroot/.well-known/acme-challenge/
+#    <Directory /var/www/certbot-webroot/.well-known/acme-challenge/>
+#        Require all granted
+#    </Directory>
+#    ProxyPass /.well-known/acme-challenge/ !
+#
+#    ProxyPreserveHost On
+#    ProxyPass        / http://127.0.0.1:${APACHE_HTTP_PORT}/
+#    ProxyPassReverse / http://127.0.0.1:${APACHE_HTTP_PORT}/
+#</VirtualHost>
 PROXY
   log "    Written: $PROXY_SNIPPET"
 done
