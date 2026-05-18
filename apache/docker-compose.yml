@@ -1,0 +1,60 @@
+version: "3.9"
+
+# Usage:
+#   APACHE_DATA_DIR=/your/data/path docker compose up -d
+# Or copy .env.example to .env and adjust before running:
+#   docker compose up -d
+
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    volumes:
+      - ${APACHE_DATA_DIR:-./data}/mysql:/var/lib/mysql
+      - ${APACHE_DATA_DIR:-./data}/mysql-config:/etc/mysql/conf.d
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-changeme_root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-webapp}
+      MYSQL_USER: ${MYSQL_USER:-webapp}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-changeme_db}
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-changeme_root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - apache_net
+
+  apache:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${APACHE_HTTP_PORT:-8080}:80"
+      - "${APACHE_HTTPS_PORT:-8443}:443"
+    volumes:
+      # Web root – put your PHP/HTML files here
+      - ${APACHE_DATA_DIR:-./data}/www:/var/www/html
+      # Apache vhost configs
+      - ${APACHE_DATA_DIR:-./data}/vhosts:/etc/apache2/sites-enabled
+      # Apache logs
+      - ${APACHE_DATA_DIR:-./data}/logs/apache:/var/log/apache2
+      # Optional custom php.ini overrides
+      - ${APACHE_DATA_DIR:-./data}/php-config:/usr/local/etc/php/conf.d/custom
+    environment:
+      MYSQL_HOST: db
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-webapp}
+      MYSQL_USER: ${MYSQL_USER:-webapp}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-changeme_db}
+      APACHE_SERVER_NAME: ${APACHE_SERVER_NAME:-localhost}
+    networks:
+      - apache_net
+
+networks:
+  apache_net:
+    driver: bridge
+

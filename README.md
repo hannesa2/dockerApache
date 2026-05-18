@@ -1,13 +1,114 @@
-https://www.docker.com/blog/multi-arch-images/
+## Apache (with MySQL)
+
+A self-contained Apache + PHP stack using **MySQL 8.4** as the database.  
+All web files, vhost configs, logs and database files live **outside** the container on the host.  
+The image is built for **linux/amd64** and **linux/arm64** (Apple Silicon, Raspberry Pi, …).
+
+### Quick start
+
+```bash
+cd apache
+
+# 1. Copy and edit the env file
+cp .env.example .env
+#    → set APACHE_DATA_DIR, ports, passwords, …
+
+# 2. Create host directories and install the default vhost
+mkdir -p data/www data/vhosts data/logs/apache data/mysql data/mysql-config
+
+# Copy sample files to get started immediately
+mkdir -p data/vhosts/
+mkdir -p data/www/
+cp sample-data/vhosts/000-default.conf data/vhosts/
+cp sample-data/www/index.php data/www/
+# Optional: second vhost example
+# cp sample-data/vhosts/myapp.conf data/vhosts/
+
+# 2.1 on MacOS, unlock the keychain to avoid "security: SecKeychainUnlock: The user name or passphrase you entered is not correct" errors when the container tries to access the mounted volumes
+security -v unlock-keychain ~/Library/Keychains/login.keychain-db
+
+# 3. Start the stack (builds the image automatically on first run)
+docker compose up -d
+
+# To force a rebuild after changing the Dockerfile:
+docker compose up -d --build
+
+# Open http://localhost:8081 (or the port you configured)
+# Note: Apache uses 8081 by default to avoid conflict with Nextcloud (8082)
+```
+
+### Specifying the data directory via command line
+
+```bash
+APACHE_DATA_DIR=/mnt/mydata docker compose up -d
+```
+
+Everything Apache and MySQL stores is then written under `/mnt/mydata/`:
 
 ```
-docker buildx ls
-docker buildx create --name apacheGenalogie
-docker buildx use apacheGenalogie
-docker buildx inspect --bootstrap
-cat <<EOF > Dockerfile\nFROM ubuntu\nRUN apt-get update && apt-get install -y curl\nWORKDIR /src\nCOPY . .\nEOF
-docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t hannesa2/demo:latest --push .
+/mnt/mydata/
+  www/                 ← Web root – put your PHP/HTML files here
+  vhosts/              ← Apache vhost config files (*.conf)
+  logs/apache/         ← Apache access and error logs
+  mysql/               ← MySQL data files
+  mysql-config/        ← Custom MySQL config (*.cnf)
 ```
+
+### Backup & Restore
+
+```bash
+cd apache
+
+# Backup (creates a timestamped folder under ./backups/)
+./backup.sh
+./backup.sh /mnt/nas/apache-backups   # custom location
+
+# Restore from a specific backup folder
+./restore.sh ./backups/20260502_120000
+```
+
+Each backup folder contains:
+
+| File | Contents |
+|---|---|
+| `mysql_webapp.sql.gz` | Full MySQL dump (gzipped SQL) |
+| `www.tar.gz` | Web root files |
+| `vhosts.tar.gz` | Apache vhost configs |
+
+#### Manual database-only commands
+
+```bash
+# Dump
+docker compose exec db \
+  mysqldump -u webapp -pchangeme_db webapp | gzip > backup.sql.gz
+
+# Restore
+gunzip -c backup.sql.gz | docker compose exec -T db \
+  mysql -u webapp -pchangeme_db webapp
+
+# Interactive MySQL shell
+docker compose exec db mysql -u webapp -pchangeme_db webapp
+```
+
+### Build the custom image locally (optional)
+
+```bash
+# amd64
+docker buildx build --platform linux/amd64 -t apache-custom:latest apache/
+
+# arm64
+docker buildx build --platform linux/arm64 -t apache-custom:latest apache/
+```
+
+> The image is built automatically by `docker compose up -d` from `apache/Dockerfile` — no pull from Docker Hub needed.
+
+### Start on boot
+
+Same as Nextcloud — `restart: unless-stopped` handles crashes automatically.
+
+**macOS:** Docker Desktop → Settings → General → ✅ Start Docker Desktop at login
+
+**Linux (systemd):** Use the same pattern as the Nextcloud service, pointing `WorkingDirectory` to your `apache/` deploy folder.
 
 ---
 
