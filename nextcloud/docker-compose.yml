@@ -131,27 +131,57 @@ services:
       OVERWRITEHOST: ${OVERWRITEHOST:-nextcloud.example.com}
       NEXTCLOUD_LOCAL_IP: ${NEXTCLOUD_LOCAL_IP:-127.0.0.1}
       NEXTCLOUD_LOCAL_IPV6: ${NEXTCLOUD_LOCAL_IPV6:-}
+      # Space-separated list of extra hostnames to also resolve to NEXTCLOUD_LOCAL_IP.
+      # Use this for other services (Apache, etc.) that share the same server.
+      # Example:  EXTRA_LOCAL_DOMAINS=www.mxtracks.info dev.mxtracks.info
+      EXTRA_LOCAL_DOMAINS: ${EXTRA_LOCAL_DOMAINS:-}
     entrypoint: []
     command:
       - /bin/sh
       - -c
       - |
         apk add --no-cache dnsmasq >/dev/null 2>&1
-        ARGS="--no-daemon --no-resolv
-          --listen-address=$$NEXTCLOUD_LOCAL_IP
-          --bind-interfaces
-          --server=$$DNS_UPSTREAM
-          --address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IP
-          --filter-rr=HTTPS
-          --log-queries --log-facility=-"
-        # When an IPv6 address is configured: also listen on it and return AAAA
-        # This allows Fritz!Box DNSv6-Server to point here as well,
-        # so AAAA queries for OVERWRITEHOST are answered with the local ULA address
-        # instead of the public IPv6 (which Android would prefer via Happy Eyeballs).
-        if [ -n "$$NEXTCLOUD_LOCAL_IPV6" ]; then
-          ARGS="$$ARGS --listen-address=$$NEXTCLOUD_LOCAL_IPV6 --address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IPV6"
-        fi
-        exec dnsmasq $$ARGS
+
+        # Build config file – avoids multi-line $ARGS quoting pitfalls
+        CFG=/tmp/dnsmasq.conf
+        {
+          echo "no-resolv"
+          echo "bind-interfaces"
+          echo "listen-address=$$NEXTCLOUD_LOCAL_IP"
+          echo "server=$$DNS_UPSTREAM"
+          echo "filter-rr=HTTPS"
+          echo "log-queries"
+          echo "log-facility=-"
+
+          # ── Primary domain (Nextcloud) ──────────────────────────────────
+          echo "address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IP"
+          # Suppress AAAA forwarding so IPv6-preferring clients (Happy Eyeballs)
+          # don't bypass the override by getting the public IPv6 from Fritz!Box.
+          # If a ULA IPv6 is configured we return that instead (see below).
+          if [ -z "$$NEXTCLOUD_LOCAL_IPV6" ]; then
+            echo "address=/$$OVERWRITEHOST/::"
+          fi
+
+          # ── Extra domains (Apache vhosts, etc.) ─────────────────────────
+          for d in $$EXTRA_LOCAL_DOMAINS; do
+            echo "address=/$$d/$$NEXTCLOUD_LOCAL_IP"
+            if [ -z "$$NEXTCLOUD_LOCAL_IPV6" ]; then
+              echo "address=/$$d/::"
+            fi
+          done
+
+          # ── IPv6 ULA overrides (when latitude has a stable private IPv6) ─
+          if [ -n "$$NEXTCLOUD_LOCAL_IPV6" ]; then
+            echo "listen-address=$$NEXTCLOUD_LOCAL_IPV6"
+            echo "address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IPV6"
+            for d in $$EXTRA_LOCAL_DOMAINS; do
+              echo "address=/$$d/$$NEXTCLOUD_LOCAL_IPV6"
+            done
+          fi
+        } > "$$CFG"
+
+        echo "=== dnsmasq config ===" && cat "$$CFG" && echo "=== end config ==="
+        exec dnsmasq --no-daemon --conf-file="$$CFG"
 
 networks:
   nextcloud_net:
