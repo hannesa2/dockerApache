@@ -49,10 +49,12 @@ MIRROR_EXTRA_PATH="${MIRROR_EXTRA_PATH:-/usr/local/bin}"
 MIRROR_SHELL="${MIRROR_SHELL:-zsh}"
 
 # ── Site definitions ──────────────────────────────────────────────────────────
-# SUBDIR | DB_NAME | DB_USER | DB_PASS | MIRROR_DOMAIN | WP_SUBPATH
+# SUBDIR | DB_NAME | DB_USER | DB_PASS | MIRROR_DOMAIN | WP_SUBPATH | SOURCE_DOMAIN
+# SOURCE_DOMAIN: the production hostname whose URLs get replaced by MIRROR_DOMAIN
+#   in all synced text files (index.html, .htaccess, wp-config.php, *.conf, …)
 declare -a SITES=(
-  "dev.mxtracks|wordpress|wordpressuser|V€spa125|dev16.mxtracks.info|/wordpress"
-  "mxdocs|wordpress_mxtracks|wpuser_mxtracks|Us€r.vespa125|www16.mxtracks.info|/wordpress"
+  "dev.mxtracks|wordpress|wordpressuser|V€spa125|dev16.mxtracks.info|/wordpress|devcopy.mxtracks.info"
+  "mxdocs|wordpress_mxtracks|wpuser_mxtracks|Us€r.vespa125|www16.mxtracks.info|/wordpress|wwwcopy.mxtracks.info"
 )
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
@@ -122,7 +124,7 @@ log "    Mirror MySQL ready."
 
 # ── Process each site ─────────────────────────────────────────────────────────
 for site_def in "${SITES[@]}"; do
-    IFS='|' read -r SUBDIR DB_NAME DB_USER DB_PASS MIRROR_DOMAIN WP_SUBPATH <<< "$site_def"
+    IFS='|' read -r SUBDIR DB_NAME DB_USER DB_PASS MIRROR_DOMAIN WP_SUBPATH SOURCE_DOMAIN <<< "$site_def"
     SOURCE_DOCROOT="$APACHE_DATA_DIR/www/$SUBDIR"
     MIRROR_DOCROOT="$MIRROR_DATA_DIR/www/$SUBDIR"
 
@@ -176,6 +178,23 @@ SQL"
         | awk '/\/$/ || /^sending/ || /^sent /' || true
     log "    Rsync done."
 
+    # ── 3b. Replace source domain with mirror domain in text files ───────────
+    log ""
+    log "==> 3b. Replacing '${SOURCE_DOMAIN}' → '${MIRROR_DOMAIN}' in text files ..."
+    # Targets: *.html, *.htm, *.php, *.conf, *.htaccess, *.js, *.css, *.txt, *.xml
+    # Uses grep -rl to find only files that actually contain the string (fast).
+    remote "find '${MIRROR_DOCROOT}' -type f \( \
+        -name '*.html' -o -name '*.htm' -o -name '*.php' \
+        -o -name '*.conf' -o -name '.htaccess' \
+        -o -name '*.js'  -o -name '*.css' \
+        -o -name '*.txt' -o -name '*.xml' \
+        \) -exec grep -lF '${SOURCE_DOMAIN}' {} + 2>/dev/null \
+        | while read -r f; do
+            sed -i 's|${SOURCE_DOMAIN}|${MIRROR_DOMAIN}|g' \"\$f\"
+            echo \"  patched: \$f\"
+          done" | tee -a "$LOG" || true
+    log "    Domain substitution done."
+
     # ── 4. Patch wp-config.php on mirror ─────────────────────────────────────
     log ""
     log "==> 4. Patching wp-config.php on mirror ..."
@@ -202,24 +221,28 @@ SQL"
     # ── 5. Fix WordPress siteurl/home in mirror DB ────────────────────────────
     log ""
     log "==> 5. Updating WordPress siteurl/home in mirror DB ..."
-    remote "cd '$MIRROR_APACHE_DIR' && \
+    # Detect the actual WordPress table prefix (may differ from default 'wp_')
+    WP_PREFIX=$(remote "cd '$MIRROR_APACHE_DIR' && \
         docker compose exec -T db mysql \
             -u root -p'${MIRROR_MYSQL_ROOT_PASSWORD}' '${DB_NAME}' \
-            -e \"UPDATE wp_options
-                    SET option_value = REPLACE(option_value,
-                        TRIM(TRAILING '${WP_SUBPATH}' FROM option_value),
-                        'https://${MIRROR_DOMAIN}')
-                 WHERE option_name IN ('siteurl','home');
-                 SELECT option_name, option_value FROM wp_options WHERE option_name IN ('siteurl','home');\" \
-        2>/dev/null" | tee -a "$LOG" || true
+            --skip-column-names -e \
+            \"SELECT REPLACE(table_name, 'options', '')
+              FROM information_schema.tables
+              WHERE table_schema='${DB_NAME}' AND table_name LIKE '%options'
+              LIMIT 1;\" 2>/dev/null" || echo "wp_")
+    WP_PREFIX="${WP_PREFIX:-wp_}"
+    log "    Detected table prefix: '${WP_PREFIX}'"
 
-    # Direct set (more reliable than REPLACE on unknown source URL)
+    # Direct set on the detected options table (most reliable)
     remote "cd '$MIRROR_APACHE_DIR' && \
         docker compose exec -T db mysql \
             -u root -p'${MIRROR_MYSQL_ROOT_PASSWORD}' '${DB_NAME}' \
-            -e \"UPDATE wp_options
+            -e \"UPDATE \\\`${WP_PREFIX}options\\\`
                     SET option_value = 'https://${MIRROR_DOMAIN}${WP_SUBPATH}'
-                 WHERE option_name IN ('siteurl','home');\" \
+                 WHERE option_name IN ('siteurl','home');
+                 SELECT option_name, option_value
+                   FROM \\\`${WP_PREFIX}options\\\`
+                  WHERE option_name IN ('siteurl','home');\" \
         2>/dev/null" | tee -a "$LOG" || true
     log "    DB URLs updated."
 
@@ -263,8 +286,8 @@ log "═════════════════════════
 log ""
 log "MIRROR DOMAINS"
 for site_def in "${SITES[@]}"; do
-    IFS='|' read -r _ _ _ _ MIRROR_DOMAIN WP_SUBPATH <<< "$site_def"
-    log "  https://${MIRROR_DOMAIN}${WP_SUBPATH}"
+    IFS='|' read -r _ _ _ _ MIRROR_DOMAIN WP_SUBPATH SOURCE_DOMAIN <<< "$site_def"
+    log "  https://${MIRROR_DOMAIN}${WP_SUBPATH}  (source: ${SOURCE_DOMAIN})"
 done
 log ""
 log "POST-SETUP on ${MIRROR_HOST} (one-time, if not done yet)"
@@ -281,7 +304,7 @@ done
 log ""
 log "  WP-CLI search-replace (run after DNS is live, once per site):"
 for site_def in "${SITES[@]}"; do
-    IFS='|' read -r SUBDIR _ _ _ MIRROR_DOMAIN WP_SUBPATH <<< "$site_def"
+    IFS='|' read -r SUBDIR _ _ _ MIRROR_DOMAIN WP_SUBPATH SOURCE_DOMAIN <<< "$site_def"
     log "  ssh ${MIRROR_HOST} \"cd ${MIRROR_APACHE_DIR} && \\"
     log "    docker compose exec --user www-data apache wp \\"
     log "      --path=/var/www/html/${SUBDIR}${WP_SUBPATH} \\"
