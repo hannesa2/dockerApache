@@ -3,7 +3,7 @@ data
 .env
 
 # Migration / sync script outputs – generated at runtime, not source files
-apache/native-proxy-*.conf
+#apache/native-proxy-*.conf
 apache/migrate-*.sql.gz
 apache/migrate-*.log
 apache/sync-mirror-*.log
