@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Usage:
 #   NEXTCLOUD_DATA_DIR=/your/data/path docker compose up -d
 # Or copy .env.example to .env and adjust values before running:
