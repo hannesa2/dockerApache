@@ -1,3 +1,37 @@
+## macOS mit OrbStack
+
+OrbStack stellt die Docker-kompatible CLI bereit. Die bestehenden Compose-Dateien
+können unverändert verwendet werden; Apache und Nextcloud bleiben getrennte Stacks
+und behalten ihre Daten in den jeweiligen Host-Verzeichnissen.
+
+```bash
+# Im Repository-Verzeichnis: prüfen, dass OrbStack läuft und den OrbStack-Kontext nutzen
+docker context ls
+docker context use orbstack
+docker context show
+
+# Beide Stacks starten (Apache-Image wird lokal gebaut)
+docker compose -f apache/docker-compose.yml up -d --build
+docker compose -f nextcloud/docker-compose.yml up -d
+
+# Status prüfen
+docker compose -f apache/docker-compose.yml ps
+docker compose -f nextcloud/docker-compose.yml ps
+```
+
+Die Weboberflächen sind über die in den jeweiligen `.env`-Dateien konfigurierten
+Ports erreichbar (standardmäßig Apache unter `http://localhost:8081` und
+Nextcloud unter `http://localhost:8082`). In den OrbStack-Einstellungen den
+automatischen Start bei der Anmeldung aktivieren, damit die Container mit OrbStack
+wieder starten.
+
+Zum Stoppen die Stacks einzeln herunterfahren; die Host-Daten bleiben erhalten:
+
+```bash
+docker compose -f apache/docker-compose.yml down
+docker compose -f nextcloud/docker-compose.yml down
+```
+
 ## Apache (with MySQL)
 
 A self-contained Apache + PHP stack using **MySQL 8.4** as the database.  
@@ -106,7 +140,7 @@ docker buildx build --platform linux/arm64 -t apache-custom:latest apache/
 
 Same as Nextcloud — `restart: unless-stopped` handles crashes automatically.
 
-**macOS:** Docker Desktop → Settings → General → ✅ Start Docker Desktop at login
+**macOS (OrbStack):** Enable OrbStack's automatic start at login in its settings.
 
 **Linux (systemd):** Use the same pattern as the Nextcloud service, pointing `WorkingDirectory` to your `apache/` deploy folder.
 
@@ -271,11 +305,10 @@ docker compose exec db psql -U nextcloud nextcloud
 All services already have `restart: unless-stopped` — they auto-recover from crashes.
 What you additionally need depends on your OS:
 
-#### macOS (Docker Desktop)
-Enable **Start Docker Desktop at login**:
-> Docker Desktop → Settings → General → ✅ Start Docker Desktop at login
+#### macOS (OrbStack)
+Enable OrbStack's automatic start at login in its settings.
 
-That's it. The containers start automatically with Docker Desktop.
+The containers start automatically with OrbStack.
 
 #### Linux (systemd)
 A ready-made systemd unit file is provided at `nextcloud/nextcloud.service`.
