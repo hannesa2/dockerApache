@@ -35,7 +35,7 @@ RUN curl -sL https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cl
     && chmod +x /usr/local/bin/wp
 
 # Enable useful Apache modules
-RUN a2enmod rewrite headers deflate expires
+RUN a2enmod rewrite headers deflate expires ssl
 
 # PHP production settings
 RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
@@ -55,4 +55,3 @@ EXPOSE 80 443
 
 # Web root and Apache config come from outside via docker-compose volumes
 VOLUME ["/var/www/html", "/etc/apache2/sites-enabled"]
-

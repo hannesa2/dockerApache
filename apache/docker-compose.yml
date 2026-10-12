@@ -39,6 +39,8 @@ services:
       - ${APACHE_DATA_DIR:-./data}/www:/var/www/html
       # Apache vhost configs
       - ${APACHE_DATA_DIR:-./data}/vhosts:/etc/apache2/sites-enabled
+      # TLS certificates for local HTTPS vhosts
+      - ${APACHE_DATA_DIR:-./data}/certs:/etc/apache2/certs:ro
       # Apache logs
       - ${APACHE_DATA_DIR:-./data}/logs/apache:/var/log/apache2
       # Optional custom php.ini overrides
