@@ -55,6 +55,14 @@ Pfad: `nextcloud/`
 - Standardwerte nur als `changeme`-artige Platzhalter akzeptieren
 - Keine hardcodierten Produktionspfade oder Container-internen Datenorte in die allgemeine Doku schreiben
 - Bei Risiko von Portkonflikten immer die `.env`-Konfiguration prüfen
+- Private Schlüssel, `.env`-Dateien und Certbot-Accountdaten niemals ausgeben, committen oder in Logs kopieren.
+- Auf `latitude` ist der Snap-Certbot-Timer der aktive Erneuerungsdienst; den deaktivierten `certbot.timer` nicht ohne vorherige Prüfung wieder aktivieren.
+- Zertifikate für `dev16.mxtracks.info` und `www16.mxtracks.info` werden durch Certbots Deploy-Hook nach erfolgreicher Erneuerung automatisch per eingeschränktem SSH-Schlüssel nach `mac2016` übertragen. Der Hook ist unter `/etc/letsencrypt/renewal-hooks/deploy/mac2016-cert-deploy` installiert.
+- Der SSH-Schlüssel darf ausschließlich `~/bin/mac2016-cert-receiver.sh` ausführen. Keine interaktive Anmeldung und keinen allgemeinen SSH-Zugang für den Zertifikatstransfer einrichten.
+- Der Empfänger installiert Zertifikat und privaten Schlüssel in `/Volumes/SamsungT5_1T/apache/certs`, prüft die Apache-Konfiguration im OrbStack-Container und lädt Apache graceful neu. Schlüsselberechtigungen müssen `0600` bleiben.
+- Certbot-Deploy-Hooks laufen nur nach einer tatsächlich erfolgreichen Zertifikatserneuerung, nicht bei jedem Timerlauf. Zum gezielten erneuten Verteilen eines bereits ausgestellten Zertifikats den installierten Hook mit `RENEWED_LINEAGE=/etc/letsencrypt/live/<domain>` ausführen; keine unnötige erzwungene Neuausstellung (`--force-renewal`) durchführen.
+- Nach Änderungen an der Certbot-Konfiguration beide Zertifikate mit `sudo snap run certbot.renew --dry-run --cert-name <domain>` testen. Ein Dry-Run löst nicht in jeder Certbot-Version Deploy-Hooks aus; den SSH-Transfer separat über den installierten Deploy-Hook validieren.
+- Änderungen am SSH-Empfänger oder an den Hook-Skripten auf beiden Hosts prüfen. Keine Zertifikate oder privaten Schlüssel zu Testzwecken in Repository-Dateien oder temporäre Git-Dateien kopieren.
 
 ## Geeignetes Verhalten für Copilot
 
@@ -62,6 +70,7 @@ Pfad: `nextcloud/`
 - Priorisiere kleine, gezielte Konfigurationsänderungen.
 - Wenn du ein neues Feature ergänzt, dokumentiere die Nutzung direkt in der passenden README oder Stack-Doku.
 - Halte die Projektstruktur sauber: Stack-spezifische Dateien bleiben in ihrem jeweiligen Ordner.
+- Bei Zertifikatsarbeiten zuerst den Erneuerungsstatus auf `latitude`, den eingeschränkten Deploy-Hook und die Zertifikatspfade auf `mac2016` prüfen; bestehende Zertifikate nicht ungefragt neu ausstellen.
 
 ## Verfügbare Einstiegspunkte
 

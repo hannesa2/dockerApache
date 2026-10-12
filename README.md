@@ -88,6 +88,28 @@ Everything Apache and MySQL stores is then written under `/mnt/mydata/`:
   mysql-config/        ← Custom MySQL config (*.cnf)
 ```
 
+### Deploying Let’s Encrypt certificates from latitude
+
+On this setup, Certbot on `latitude` renews `www16.mxtracks.info` and
+`dev16.mxtracks.info`. Its deploy hook sends only those certificates to
+`mac2016` using a dedicated SSH key restricted to the certificate receiver.
+After installing a renewed pair, the receiver validates Apache’s configuration
+and gracefully reloads the Apache container. The private keys are installed
+with mode `0600`; they are not stored in this repository. The Snap Certbot timer
+is the active renewal timer; the duplicate distribution-package timer is disabled.
+
+The scripts are `apache/letsencrypt-deploy-hook.sh` (installed on latitude as
+`/etc/letsencrypt/renewal-hooks/deploy/mac2016-cert-deploy`) and
+`apache/mac2016-cert-receiver.sh` (installed on macOS as
+`~/bin/mac2016-cert-receiver.sh`). The receiver is specific to this host’s
+OrbStack context, Compose file, and `/Volumes/SamsungT5_1T/apache/certs` data
+directory. Run a Certbot dry-run after changing renewal settings:
+
+```bash
+sudo snap run certbot.renew --dry-run --cert-name dev16.mxtracks.info
+sudo snap run certbot.renew --dry-run --cert-name www16.mxtracks.info
+```
+
 ### Backup & Restore
 
 ```bash
