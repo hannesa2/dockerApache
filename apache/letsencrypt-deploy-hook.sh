@@ -6,12 +6,19 @@ export LC_ALL=C LANG=C
 
 site="${RENEWED_LINEAGE##*/}"
 case "$site" in
-    dev16.mxtracks.info|www16.mxtracks.info)
+    dev16.mxtracks.info|www16.mxtracks.info|git16.mxtracks.info)
         ;;
     *)
         exit 0
         ;;
 esac
+
+for file in fullchain.pem privkey.pem; do
+    if [ ! -r "$RENEWED_LINEAGE/$file" ]; then
+        echo "Missing or unreadable renewed certificate file: $RENEWED_LINEAGE/$file" >&2
+        exit 1
+    fi
+done
 
 tar -h -C "$RENEWED_LINEAGE" -cf - fullchain.pem privkey.pem |
 ssh \

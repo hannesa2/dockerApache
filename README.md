@@ -91,12 +91,14 @@ Everything Apache and MySQL stores is then written under `/mnt/mydata/`:
 ### Deploying Let’s Encrypt certificates from latitude
 
 On this setup, Certbot on `latitude` renews `www16.mxtracks.info` and
-`dev16.mxtracks.info`. Its deploy hook sends only those certificates to
-`mac2016` using a dedicated SSH key restricted to the certificate receiver.
-After installing a renewed pair, the receiver validates Apache’s configuration
-and gracefully reloads the Apache container. The private keys are installed
-with mode `0600`; they are not stored in this repository. The Snap Certbot timer
-is the active renewal timer; the duplicate distribution-package timer is disabled.
+`dev16.mxtracks.info`. The deploy hook is also prepared to deploy
+`git16.mxtracks.info` once its certificate has been issued. It sends only those
+certificates to `mac2016` using a dedicated SSH key restricted to the
+certificate receiver. After installing a renewed pair, the receiver validates
+Apache's configuration and gracefully reloads Apache. The private keys are
+installed with mode `0600`; they are not stored in this repository. The Snap
+Certbot timer is the active renewal timer; the duplicate distribution-package
+timer is disabled.
 
 The scripts are `apache/letsencrypt-deploy-hook.sh` (installed on latitude as
 `/etc/letsencrypt/renewal-hooks/deploy/mac2016-cert-deploy`) and
@@ -109,6 +111,90 @@ directory. Run a Certbot dry-run after changing renewal settings:
 sudo snap run certbot.renew --dry-run --cert-name dev16.mxtracks.info
 sudo snap run certbot.renew --dry-run --cert-name www16.mxtracks.info
 ```
+
+### GitLab CE standby copy
+
+The GitLab CE service in `gitlab/docker-compose.yml` is a separate standby copy
+of the GitLab instance on `latitude`, pinned to the same GitLab version. On
+mac2016 it has no published host ports; it shares the private `gitlab_proxy`
+Docker network with the Apache container. Apache selects the backend vhost from
+the request hostname and reverse-proxies `git16.mxtracks.info` to GitLab over
+internal HTTP. TLS terminates at Apache on port `9443`; the GitLab container
+does not manage certificates. Its config, logs and application data live under
+`/Volumes/SamsungT5_1T/gitlab/`. There is currently no `git16.mxtracks.info`
+certificate; HTTPS will become available after issuance and deployment.
+
+DNS only resolves each hostname to an IP address; Apache routes by the HTTP
+`Host` header and TLS SNI. The router must forward public TCP `9080` to
+mac2016's host port `9080`, and public TCP `9443` to host port `9443`. If
+`git16.mxtracks.info:9080` shows macOS's native Apache welcome page, check that
+forwarding target: the request is reaching native port `80` rather than the
+Docker Apache port. No additional public port is needed.
+
+The Apache vhost snippets are `gitlab/apache-git16-http.conf` and
+`gitlab/apache-git16-https.conf`. The HTTP vhost proxies requests to the
+internal GitLab service. Enable the HTTPS vhost after the matching Let's
+Encrypt certificate has been deployed to mac2016.
+
+The source-side job creates a consistent GitLab backup once per day and streams
+it to mac2016 over SSH. The dedicated SSH key can run only
+`~/bin/gitlab-mac-backup-receiver.sh`; the receiver validates the archive,
+preserves the three most recent backup generations and refuses a transfer if
+less than 200 GiB would remain free. It stores `gitlab.rb` and
+`gitlab-secrets.json` with each backup. The private key and secret file are
+never stored in this repository.
+
+This is a daily backup, not continuous replication: the mac2016 copy does not
+receive changes immediately, and any writes made to the standby are independent
+of the production instance. In a disaster, first ensure the `latitude` instance
+cannot return as an active writer, then restore the latest backup on mac2016 and
+route `git16.mxtracks.info` to it. Keep both instances on exactly the same
+GitLab version for backup restoration. The public DNS/reverse-proxy cutover is a
+separate networking step.
+
+`www16`, `dev16` and `git16` all use the same MyFRITZ CNAME target, so use the
+same HTTP-01 standalone flow as the existing `www16` and `dev16` lineages.
+Apache on latitude must be stopped briefly so Certbot can listen on port 80.
+For the initial issuance, run this on latitude; the shell trap restarts Apache
+even if Certbot fails:
+
+```bash
+sudo bash -c '
+set -e
+systemctl stop apache2
+trap "systemctl start apache2" EXIT
+snap run certbot certonly --standalone \
+  --cert-name git16.mxtracks.info \
+  -d git16.mxtracks.info
+'
+```
+
+After successful issuance, deploy the initial certificate to mac2016 using the
+installed restricted deploy hook:
+
+```bash
+sudo env RENEWED_LINEAGE=/etc/letsencrypt/live/git16.mxtracks.info \
+  /etc/letsencrypt/renewal-hooks/deploy/mac2016-cert-deploy
+```
+
+The existing Certbot pre/post hooks stop and start Apache during future
+standalone renewals; the deploy hook transfers each renewed certificate to
+mac2016 and reloads its Apache container.
+
+The standby can be restored and run without a `git16` certificate; the
+certificate is needed only to enable HTTPS at Apache. On the first restore,
+GitLab's data/config/logs directories must be empty. Run the restore helper
+from the repository:
+
+```bash
+./gitlab/restore-standby.sh
+```
+
+It restores the newest received backup by default, verifies the archive,
+secrets file and available storage, and refuses to overwrite existing GitLab
+state unless resuming an interrupted restore. Test it only when intentionally
+initializing the standby; for a routine backup, the scheduled job transfers
+data without starting or modifying the standby GitLab service.
 
 ### Backup & Restore
 

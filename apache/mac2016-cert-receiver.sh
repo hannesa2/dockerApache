@@ -3,7 +3,7 @@ set -euo pipefail
 export LC_ALL=C LANG=C
 
 case "${SSH_ORIGINAL_COMMAND:-}" in
-    dev16.mxtracks.info|www16.mxtracks.info)
+    dev16.mxtracks.info|www16.mxtracks.info|git16.mxtracks.info)
         site="$SSH_ORIGINAL_COMMAND"
         ;;
     *)
@@ -12,7 +12,11 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         ;;
 esac
 
-cert_dir="/Volumes/SamsungT5_1T/apache/certs"
+if [ "$site" = git16.mxtracks.info ]; then
+    cert_dir="/Volumes/SamsungT5_1T/apache/certs"
+else
+    cert_dir="/Volumes/SamsungT5_1T/apache/certs"
+fi
 staging_dir="$(/usr/bin/mktemp -d "$cert_dir/.incoming.XXXXXX")"
 trap 'rm -rf "$staging_dir"' EXIT
 archive="$staging_dir/certificates.tar"
@@ -47,6 +51,14 @@ done
 /bin/mv -f "$cert_dir/$site-fullchain.pem.new" "$cert_dir/$site-fullchain.pem"
 /bin/mv -f "$cert_dir/$site-privkey.pem.new" "$cert_dir/$site-privkey.pem"
 
+if [ "$site" = git16.mxtracks.info ] &&
+    ! /usr/bin/grep -q 'SSLCertificateFile /etc/apache2/certs/git16.mxtracks.info-fullchain.pem' \
+        /Volumes/SamsungT5_1T/apache/vhosts/git16.mxtracks.info.conf \
+        2>/dev/null; then
+    /bin/cat "$HOME/git/dockerApache/gitlab/apache-git16-https.conf" \
+        >> /Volumes/SamsungT5_1T/apache/vhosts/git16.mxtracks.info.conf
+fi
+
 "$HOME/.orbstack/bin/docker" --context orbstack \
     compose -f "$HOME/git/dockerApache/apache/docker-compose.yml" \
     exec -T apache apachectl -t
@@ -54,4 +66,4 @@ done
     compose -f "$HOME/git/dockerApache/apache/docker-compose.yml" \
     exec -T apache apachectl -k graceful
 
-echo "Installed renewed certificate for $site"
+echo "Installed renewed certificate for $site and reloaded Apache"

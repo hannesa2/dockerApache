@@ -57,12 +57,17 @@ Pfad: `nextcloud/`
 - Bei Risiko von Portkonflikten immer die `.env`-Konfiguration prüfen
 - Private Schlüssel, `.env`-Dateien und Certbot-Accountdaten niemals ausgeben, committen oder in Logs kopieren.
 - Auf `latitude` ist der Snap-Certbot-Timer der aktive Erneuerungsdienst; den deaktivierten `certbot.timer` nicht ohne vorherige Prüfung wieder aktivieren.
-- Zertifikate für `dev16.mxtracks.info` und `www16.mxtracks.info` werden durch Certbots Deploy-Hook nach erfolgreicher Erneuerung automatisch per eingeschränktem SSH-Schlüssel nach `mac2016` übertragen. Der Hook ist unter `/etc/letsencrypt/renewal-hooks/deploy/mac2016-cert-deploy` installiert.
+- Zertifikate für `dev16.mxtracks.info` und `www16.mxtracks.info` sowie (nach erfolgreicher Erstausstellung) `git16.mxtracks.info` werden durch Certbots Deploy-Hook nach erfolgreicher Erneuerung automatisch per eingeschränktem SSH-Schlüssel nach `mac2016` übertragen. Der Hook ist unter `/etc/letsencrypt/renewal-hooks/deploy/mac2016-cert-deploy` installiert.
 - Der SSH-Schlüssel darf ausschließlich `~/bin/mac2016-cert-receiver.sh` ausführen. Keine interaktive Anmeldung und keinen allgemeinen SSH-Zugang für den Zertifikatstransfer einrichten.
 - Der Empfänger installiert Zertifikat und privaten Schlüssel in `/Volumes/SamsungT5_1T/apache/certs`, prüft die Apache-Konfiguration im OrbStack-Container und lädt Apache graceful neu. Schlüsselberechtigungen müssen `0600` bleiben.
 - Certbot-Deploy-Hooks laufen nur nach einer tatsächlich erfolgreichen Zertifikatserneuerung, nicht bei jedem Timerlauf. Zum gezielten erneuten Verteilen eines bereits ausgestellten Zertifikats den installierten Hook mit `RENEWED_LINEAGE=/etc/letsencrypt/live/<domain>` ausführen; keine unnötige erzwungene Neuausstellung (`--force-renewal`) durchführen.
 - Nach Änderungen an der Certbot-Konfiguration beide Zertifikate mit `sudo snap run certbot.renew --dry-run --cert-name <domain>` testen. Ein Dry-Run löst nicht in jeder Certbot-Version Deploy-Hooks aus; den SSH-Transfer separat über den installierten Deploy-Hook validieren.
 - Änderungen am SSH-Empfänger oder an den Hook-Skripten auf beiden Hosts prüfen. Keine Zertifikate oder privaten Schlüssel zu Testzwecken in Repository-Dateien oder temporäre Git-Dateien kopieren.
+- Die GitLab-CE-Standby-Instanz unter `gitlab/` ist eine unabhängige Tagesbackup-Kopie von `latitude`, keine Live-Replikation. Änderungen am Standby fließen nicht zurück in Produktion; im Desasterfall vor dem Failover einen Split-Brain durch Abschalten/Isolieren der Latitude-Instanz verhindern.
+- GitLab-Backup-Archive, `gitlab.rb` und `gitlab-secrets.json` werden außerhalb des Repositories unter `/Volumes/SamsungT5_1T/gitlab/backups/` gespeichert; die letzten drei erfolgreichen Generationen bleiben erhalten. `gitlab-secrets.json` wie ein privates Schlüsselmaterial behandeln.
+- Standby- und Produktions-GitLab-Version müssen für Restore exakt übereinstimmen. Die Standby-Compose-Datei pinnt derzeit `19.4.1-ce.0`; Upgrades koordiniert und erst nach erfolgreichem Backup/Test durchführen.
+- Die tägliche GitLab-Backup-Übertragung verwendet auf `latitude` einen eigenen eingeschränkten SSH-Schlüssel und auf mac2016 einen validierenden Empfänger; nicht mit dem separaten Zertifikat-Deploy-Schlüssel zusammenlegen oder deren erzwungene Befehle erweitern.
+- `gitlab/restore-standby.sh` ist nur für eine bewusst initialisierte/wiederhergestellte Standby-Instanz gedacht; das Skript verweigert die Wiederherstellung über bestehenden GitLab-Daten. Routine-Backups verändern oder starten den Standby nicht.
 
 ## Geeignetes Verhalten für Copilot
 
