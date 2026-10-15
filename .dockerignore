@@ -1,0 +1,7 @@
+**
+!githubArtifactsPy/
+!githubArtifactsPy/**
+githubArtifactsPy/.git
+!github-artifacts/
+!github-artifacts/Dockerfile
+!github-artifacts/prefix-support.patch

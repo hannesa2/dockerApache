@@ -1,13 +1,279 @@
-https://www.docker.com/blog/multi-arch-images/
+## macOS mit OrbStack
+
+OrbStack stellt die Docker-kompatible CLI bereit. Die bestehenden Compose-Dateien
+können unverändert verwendet werden; Apache und Nextcloud bleiben getrennte Stacks
+und behalten ihre Daten in den jeweiligen Host-Verzeichnissen.
+
+```bash
+# Im Repository-Verzeichnis: prüfen, dass OrbStack läuft und den OrbStack-Kontext nutzen
+docker context ls
+docker context use orbstack
+docker context show
+
+# Beide Stacks starten (Apache-Image wird lokal gebaut)
+docker compose -f apache/docker-compose.yml up -d --build
+docker compose -f nextcloud/docker-compose.yml up -d
+
+# Status prüfen
+docker compose -f apache/docker-compose.yml ps
+docker compose -f nextcloud/docker-compose.yml ps
+```
+
+Die Weboberflächen sind über die in den jeweiligen `.env`-Dateien konfigurierten
+Ports erreichbar (standardmäßig Apache unter `http://localhost:8081` und
+Nextcloud unter `http://localhost:8082`). In den OrbStack-Einstellungen den
+automatischen Start bei der Anmeldung aktivieren, damit die Container mit OrbStack
+wieder starten.
+
+Zum Stoppen die Stacks einzeln herunterfahren; die Host-Daten bleiben erhalten:
+
+```bash
+docker compose -f apache/docker-compose.yml down
+docker compose -f nextcloud/docker-compose.yml down
+```
+
+## Apache (with MySQL)
+
+A self-contained Apache + PHP stack using **MySQL 8.4** as the database.  
+All web files, vhost configs, logs and database files live **outside** the container on the host.  
+The image is built for **linux/amd64** and **linux/arm64** (Apple Silicon, Raspberry Pi, …).
+
+### Quick start
+
+```bash
+cd apache
+
+# 1. Copy and edit the env file
+cp .env.example .env
+#    → set APACHE_DATA_DIR, ports, passwords, …
+
+# 2. Create host directories and install the default vhost
+mkdir -p data/www data/vhosts data/logs/apache data/mysql data/mysql-config
+
+# Copy sample files to get started immediately
+mkdir -p data/vhosts/
+mkdir -p data/www/
+cp sample-data/vhosts/000-default.conf data/vhosts/
+cp sample-data/www/index.php data/www/
+# Optional: second vhost example
+# cp sample-data/vhosts/myapp.conf data/vhosts/
+
+# 2.1 on MacOS, unlock the keychain to avoid "security: SecKeychainUnlock: The user name or passphrase you entered is not correct" errors when the container tries to access the mounted volumes
+security -v unlock-keychain ~/Library/Keychains/login.keychain-db
+
+# 3. Start the stack (builds the image automatically on first run)
+docker compose up -d
+
+# To force a rebuild after changing the Dockerfile:
+docker compose up -d --build
+
+# Open http://localhost:8081 (or the port you configured)
+# Note: Apache uses 8081 by default to avoid conflict with Nextcloud (8082)
+```
+
+### Specifying the data directory via command line
+
+```bash
+APACHE_DATA_DIR=/mnt/mydata docker compose up -d
+```
+
+Everything Apache and MySQL stores is then written under `/mnt/mydata/`:
 
 ```
-docker buildx ls
-docker buildx create --name apacheGenalogie
-docker buildx use apacheGenalogie
-docker buildx inspect --bootstrap
-cat <<EOF > Dockerfile\nFROM ubuntu\nRUN apt-get update && apt-get install -y curl\nWORKDIR /src\nCOPY . .\nEOF
-docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t hannesa2/demo:latest --push .
+/mnt/mydata/
+  www/                 ← Web root – put your PHP/HTML files here
+  vhosts/              ← Apache vhost config files (*.conf)
+  logs/apache/         ← Apache access and error logs
+  mysql/               ← MySQL data files
+  mysql-config/        ← Custom MySQL config (*.cnf)
 ```
+
+### Deploying Let’s Encrypt certificates from latitude
+
+On this setup, Certbot on `latitude` renews `www16.mxtracks.info` and
+`dev16.mxtracks.info`. The deploy hook is also prepared to deploy
+`git16.mxtracks.info` once its certificate has been issued. It sends only those
+certificates to `mac2016` using a dedicated SSH key restricted to the
+certificate receiver. After installing a renewed pair, the receiver validates
+Apache's configuration and gracefully reloads Apache. The private keys are
+installed with mode `0600`; they are not stored in this repository. The Snap
+Certbot timer is the active renewal timer; the duplicate distribution-package
+timer is disabled.
+
+The scripts are `apache/letsencrypt-deploy-hook.sh` (installed on latitude as
+`/etc/letsencrypt/renewal-hooks/deploy/mac2016-cert-deploy`) and
+`apache/mac2016-cert-receiver.sh` (installed on macOS as
+`~/bin/mac2016-cert-receiver.sh`). The receiver is specific to this host’s
+OrbStack context, Compose file, and `/Volumes/SamsungT5_1T/apache/certs` data
+directory. Run a Certbot dry-run after changing renewal settings:
+
+```bash
+sudo snap run certbot.renew --dry-run --cert-name dev16.mxtracks.info
+sudo snap run certbot.renew --dry-run --cert-name www16.mxtracks.info
+```
+
+### GitLab CE standby copy
+
+The GitLab CE service in `gitlab/docker-compose.yml` is a separate standby copy
+of the GitLab instance on `latitude`, pinned to the same GitLab version. On
+mac2016 it has no published host ports; it shares the private `gitlab_proxy`
+Docker network with the Apache container. Apache selects the backend vhost from
+the request hostname and reverse-proxies `git16.mxtracks.info` to GitLab over
+internal HTTP. TLS terminates at Apache on port `9443`; the GitLab container
+does not manage certificates. Its config, logs and application data live under
+`/Volumes/SamsungT5_1T/gitlab/`. There is currently no `git16.mxtracks.info`
+certificate; HTTPS will become available after issuance and deployment.
+
+DNS only resolves each hostname to an IP address; Apache routes by the HTTP
+`Host` header and TLS SNI. The router must forward public TCP `9080` to
+mac2016's host port `9080`, and public TCP `9443` to host port `9443`. If
+`git16.mxtracks.info:9080` shows macOS's native Apache welcome page, check that
+forwarding target: the request is reaching native port `80` rather than the
+Docker Apache port. No additional public port is needed.
+
+The Apache vhost snippets are `gitlab/apache-git16-http.conf` and
+`gitlab/apache-git16-https.conf`. The HTTP vhost proxies requests to the
+internal GitLab service. Enable the HTTPS vhost after the matching Let's
+Encrypt certificate has been deployed to mac2016.
+
+The source-side job creates a consistent GitLab backup once per day and streams
+it to mac2016 over SSH. The dedicated SSH key can run only
+`~/bin/gitlab-mac-backup-receiver.sh`; the receiver validates the archive,
+preserves the three most recent backup generations and refuses a transfer if
+less than 200 GiB would remain free. It stores `gitlab.rb` and
+`gitlab-secrets.json` with each backup. The private key and secret file are
+never stored in this repository.
+
+This is a daily backup, not continuous replication: the mac2016 copy does not
+receive changes immediately, and any writes made to the standby are independent
+of the production instance. In a disaster, first ensure the `latitude` instance
+cannot return as an active writer, then restore the latest backup on mac2016 and
+route `git16.mxtracks.info` to it. Keep both instances on exactly the same
+GitLab version for backup restoration. The public DNS/reverse-proxy cutover is a
+separate networking step.
+
+`www16`, `dev16` and `git16` all use the same MyFRITZ CNAME target, so use the
+same HTTP-01 standalone flow as the existing `www16` and `dev16` lineages.
+Apache on latitude must be stopped briefly so Certbot can listen on port 80.
+For the initial issuance, run this on latitude; the shell trap restarts Apache
+even if Certbot fails:
+
+```bash
+sudo bash -c '
+set -e
+systemctl stop apache2
+trap "systemctl start apache2" EXIT
+snap run certbot certonly --standalone \
+  --cert-name git16.mxtracks.info \
+  -d git16.mxtracks.info
+'
+```
+
+After successful issuance, deploy the initial certificate to mac2016 using the
+installed restricted deploy hook:
+
+```bash
+sudo env RENEWED_LINEAGE=/etc/letsencrypt/live/git16.mxtracks.info \
+  /etc/letsencrypt/renewal-hooks/deploy/mac2016-cert-deploy
+```
+
+The existing Certbot pre/post hooks stop and start Apache during future
+standalone renewals; the deploy hook transfers each renewed certificate to
+mac2016 and reloads its Apache container.
+
+The standby can be restored and run without a `git16` certificate; the
+certificate is needed only to enable HTTPS at Apache. On the first restore,
+GitLab's data/config/logs directories must be empty. Run the restore helper
+from the repository:
+
+```bash
+./gitlab/restore-standby.sh
+```
+
+It restores the newest received backup by default, verifies the archive,
+secrets file and available storage, and refuses to overwrite existing GitLab
+state unless resuming an interrupted restore. Test it only when intentionally
+initializing the standby; for a routine backup, the scheduled job transfers
+data without starting or modifying the standby GitLab service.
+
+### GitHub artifacts mirror
+
+The `/github` file-management app from `latitude` is mirrored on mac2016 as a
+private `github-artifacts` container, based on the pinned
+`githubArtifactsPy` submodule revision `b657c71b4e025bfdcc4f2418c70e15301010b62a`.
+Apache proxies `/github/` from the `www16.mxtracks.info` vhost to the app over
+the private Compose network. The app's WSGI prefix handling preserves its
+subpath URLs. The app has no published host port.
+
+The initial upload files and `parameter.yml` live outside the repository under
+`/Volumes/SamsungT5_1T/githubArtifactsPy/`. The parameter file contains the
+same upload authentication as the latitude service and must remain private.
+Do not commit it. A macOS LaunchAgent runs `github-artifacts/sync-latitude.sh`
+at 03:35 each day. It mirrors files one way from
+`latitude:/daten/githubArtifactsPy/` and propagates changes and deletions;
+mirror-only changes will be overwritten or deleted. Disable that sync before
+promoting mac2016 as the writable primary.
+
+The existing HTTPS listener on host port `9443` remains unchanged. A second
+local alias on host port `8443` serves the same Apache vhost, so the mirror URL
+is `https://www16.mxtracks.info:8443/github/`. The host listener is added by
+Compose; this setup does not change the FRITZ!Box port-forwarding rules.
+
+### Backup & Restore
+
+```bash
+cd apache
+
+# Backup (creates a timestamped folder under ./backups/)
+./backup.sh
+./backup.sh /mnt/nas/apache-backups   # custom location
+
+# Restore from a specific backup folder
+./restore.sh ./backups/20260502_120000
+```
+
+Each backup folder contains:
+
+| File | Contents |
+|---|---|
+| `mysql_webapp.sql.gz` | Full MySQL dump (gzipped SQL) |
+| `www.tar.gz` | Web root files |
+| `vhosts.tar.gz` | Apache vhost configs |
+
+#### Manual database-only commands
+
+```bash
+# Dump
+docker compose exec db \
+  mysqldump -u webapp -pchangeme_db webapp | gzip > backup.sql.gz
+
+# Restore
+gunzip -c backup.sql.gz | docker compose exec -T db \
+  mysql -u webapp -pchangeme_db webapp
+
+# Interactive MySQL shell
+docker compose exec db mysql -u webapp -pchangeme_db webapp
+```
+
+### Build the custom image locally (optional)
+
+```bash
+# amd64
+docker buildx build --platform linux/amd64 -t apache-custom:latest apache/
+
+# arm64
+docker buildx build --platform linux/arm64 -t apache-custom:latest apache/
+```
+
+> The image is built automatically by `docker compose up -d` from `apache/Dockerfile` — no pull from Docker Hub needed.
+
+### Start on boot
+
+Same as Nextcloud — `restart: unless-stopped` handles crashes automatically.
+
+**macOS (OrbStack):** Enable OrbStack's automatic start at login in its settings.
+
+**Linux (systemd):** Use the same pattern as the Nextcloud service, pointing `WorkingDirectory` to your `apache/` deploy folder.
 
 ---
 
@@ -170,11 +436,10 @@ docker compose exec db psql -U nextcloud nextcloud
 All services already have `restart: unless-stopped` — they auto-recover from crashes.
 What you additionally need depends on your OS:
 
-#### macOS (Docker Desktop)
-Enable **Start Docker Desktop at login**:
-> Docker Desktop → Settings → General → ✅ Start Docker Desktop at login
+#### macOS (OrbStack)
+Enable OrbStack's automatic start at login in its settings.
 
-That's it. The containers start automatically with Docker Desktop.
+The containers start automatically with OrbStack.
 
 #### Linux (systemd)
 A ready-made systemd unit file is provided at `nextcloud/nextcloud.service`.
