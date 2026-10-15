@@ -1,0 +1,3 @@
+[submodule "githubArtifactsPy"]
+	path = githubArtifactsPy
+	url = git@github.com:hannesa2/githubArtifactsPy.git

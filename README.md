@@ -196,6 +196,29 @@ state unless resuming an interrupted restore. Test it only when intentionally
 initializing the standby; for a routine backup, the scheduled job transfers
 data without starting or modifying the standby GitLab service.
 
+### GitHub artifacts mirror
+
+The `/github` file-management app from `latitude` is mirrored on mac2016 as a
+private `github-artifacts` container, based on the pinned
+`githubArtifactsPy` submodule revision `b657c71b4e025bfdcc4f2418c70e15301010b62a`.
+Apache proxies `/github/` from the `www16.mxtracks.info` vhost to the app over
+the private Compose network. The app's WSGI prefix handling preserves its
+subpath URLs. The app has no published host port.
+
+The initial upload files and `parameter.yml` live outside the repository under
+`/Volumes/SamsungT5_1T/githubArtifactsPy/`. The parameter file contains the
+same upload authentication as the latitude service and must remain private.
+Do not commit it. A macOS LaunchAgent runs `github-artifacts/sync-latitude.sh`
+at 03:35 each day. It mirrors files one way from
+`latitude:/daten/githubArtifactsPy/` and propagates changes and deletions;
+mirror-only changes will be overwritten or deleted. Disable that sync before
+promoting mac2016 as the writable primary.
+
+The existing HTTPS listener on host port `9443` remains unchanged. A second
+local alias on host port `8443` serves the same Apache vhost, so the mirror URL
+is `https://www16.mxtracks.info:8443/github/`. The host listener is added by
+Compose; this setup does not change the FRITZ!Box port-forwarding rules.
+
 ### Backup & Restore
 
 ```bash
