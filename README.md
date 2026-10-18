@@ -232,6 +232,45 @@ scheduled database import. The database password and copied `config.ini.php`
 are private runtime data under `/Volumes/SamsungT5_1T/apache/`, never commit
 them.
 
+### ownCloud daily standby mirror
+
+The ownCloud 10.13.4 copy is stored on Samsung T7 under
+`/Volumes/SamsungT7_2T/ownCloudBackup/owncloud`. It runs in its own Apache/PHP
+7.4 container and PostgreSQL 14 database; the main Apache vhost proxies
+`https://www16.mxtracks.info:8443/owncloud/` to it. This isolates the legacy
+ownCloud runtime from the main PHP 8.3 container that serves Matomo and the
+other sites.
+
+On mac2016, prepare the mirror storage and build the compatible runtime:
+
+```bash
+if [ ! -f apache/.env ]; then cp apache/.env.example apache/.env; fi
+./owncloud/prepare-mirror.sh
+```
+
+The preparation script generates private PostgreSQL passwords in the ignored
+`apache/.env`, preserves the existing T7 data/config, and builds the compatible
+container. The first successful sync activates the Apache proxy. Then, on
+latitude, install and run the root-owned initial sync job:
+
+```bash
+sudo ./owncloud/install-latitude-sync.sh
+```
+
+It places a daily 03:45 cron job on latitude. Rsync transfers bulk file changes
+while the source remains available, then latitude briefly enters maintenance
+mode for a final delta and consistent database snapshot. Rsync transfers only
+changed files after the initial baseline; the database is restored into the
+private mirror PostgreSQL service. The
+mirror is a standby: changes made to it are replaced by latitude's state at the
+next sync. Do not use it as an independent writable service.
+
+ownCloud 10.13.4 explicitly rejects PHP 8.0 and newer. Its dedicated ownCloud
+10.13.4 container uses PHP 7.4, so it no longer runs under PHP 8.3. PHP 7.4 is
+end-of-life; this compatibility runtime is intended to preserve the current
+backup version, not as a long-term supported upgrade path. Keep it isolated
+and plan an ownCloud upgrade separately.
+
 ### Backup & Restore
 
 ```bash

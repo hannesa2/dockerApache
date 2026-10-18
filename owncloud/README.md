@@ -1,0 +1,57 @@
+# ownCloud standby mirror
+
+The production ownCloud at latitude is version 10.13.4, which rejects PHP 8.0
+and newer. Its mirror therefore uses the isolated official
+`owncloud/server:10.13.4` image, whose runtime is PHP 7.4; it is not executed by
+the main PHP 8.3 Apache container.
+
+## mac2016 setup
+
+`prepare-mirror.sh` requires the existing 10.13.4 installation and data copy
+on Samsung T7. It creates private runtime directories and passwords, adds the
+Apache `/owncloud/` proxy include, builds the PHP image, and attaches Apache to
+the private ownCloud proxy network:
+
+```bash
+./owncloud/prepare-mirror.sh
+```
+
+## latitude setup
+
+From the repository checkout on latitude, run once as root:
+
+```bash
+sudo ./owncloud/install-latitude-sync.sh
+```
+
+The installer registers a daily 03:45 cron job and performs the initial sync.
+The root job is necessary because latitude's ownCloud data directory is
+readable only by `www-data`. It uses the existing latitude-to-mac2016 SSH key
+and known-hosts entry. Bulk file changes sync before maintenance mode; latitude
+is briefly put in maintenance for a final file delta and consistent
+PostgreSQL 14 custom-format database dump. A trap restores source maintenance
+mode if the job fails.
+
+The T7 tree has explicit safety markers. The sync refuses to run without those
+markers, the source `.ocdata` marker, ownCloud 10.13.4, and the expected source
+database. Rsync is incremental and removes mirror-only files to keep the
+standby aligned. A failed mirror database restore leaves the mirror in
+maintenance mode rather than serving mismatched data.
+
+## Operations
+
+```bash
+# On mac2016
+docker compose -f apache/docker-compose.yml --profile owncloud ps
+docker compose -f apache/docker-compose.yml --profile owncloud logs owncloud
+
+# On latitude
+sudo /usr/local/sbin/owncloud-mirror-sync
+tail -n 100 /var/log/owncloud-mirror-sync.log
+```
+
+The mirror remains a standby, not a second independent writer. Its writes are
+replaced by the next daily source sync. ownCloud 10.13.4 and PHP 7.4 are both
+legacy software; the dedicated runtime is for compatibility and should be
+upgraded separately rather than changing the production-matched backup code
+in place.
