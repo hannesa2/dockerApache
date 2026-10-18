@@ -219,6 +219,19 @@ local alias on host port `8443` serves the same Apache vhost, so the mirror URL
 is `https://www16.mxtracks.info:8443/github/`. The host listener is added by
 Compose; this setup does not change the FRITZ!Box port-forwarding rules.
 
+### Matomo/Piwik mirror
+
+The existing Matomo 4.14.1 installation under `mxdocs/piwik` is copied from
+latitude into the `www16` web root. It is served directly by the existing
+Apache/PHP container at `https://www16.mxtracks.info:8443/piwik/`, including
+the tracking endpoint `piwik.php`. Its initial 311-table database snapshot is
+imported into the dedicated `matomo_mirror` schema on the Apache MySQL
+container. After that initial copy the database runs independently; mirror
+tracking requests are not replicated back to latitude or overwritten by a
+scheduled database import. The database password and copied `config.ini.php`
+are private runtime data under `/Volumes/SamsungT5_1T/apache/`, never commit
+them.
+
 ### Backup & Restore
 
 ```bash
