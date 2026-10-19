@@ -45,6 +45,7 @@ remote() {
 sync_code() {
     echo "Syncing ownCloud code..."
     rsync -rltp --delete --partial \
+        --rsync-path=/usr/local/bin/rsync \
         --exclude=/config/ \
         --exclude=/data/ \
         --exclude=/.owncloud-mirror-managed \
@@ -67,6 +68,7 @@ sync_data() {
 sync_config() {
     echo "Syncing ownCloud configuration..."
     rsync -rltp --delete --partial \
+        --rsync-path=/usr/local/bin/rsync \
         --exclude=/.owncloud-mirror-managed \
         --info=stats1 \
         -e "ssh -i $SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KNOWN_HOSTS" \
