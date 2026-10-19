@@ -265,6 +265,18 @@ private mirror PostgreSQL service. The
 mirror is a standby: changes made to it are replaced by latitude's state at the
 next sync. Do not use it as an independent writable service.
 
+After the sync script has been transferred to latitude, configure completion
+notifications for its ownCloud sync, GitLab backup transfer, and PostgreSQL
+backup with:
+
+```bash
+sudo ./owncloud/install-sync-notifications.sh
+```
+
+Each job emails its success or failure, exit status, and useful log output to
+`hannes.software@gmx.at`. This installs notifications only; it does not rerun
+the large initial sync.
+
 ownCloud 10.13.4 explicitly rejects PHP 8.0 and newer. Its dedicated ownCloud
 10.13.4 container uses PHP 7.4, so it no longer runs under PHP 8.3. PHP 7.4 is
 end-of-life; this compatibility runtime is intended to preserve the current

@@ -32,6 +32,19 @@ is briefly put in maintenance for a final file delta and consistent
 PostgreSQL 14 custom-format database dump. A trap restores source maintenance
 mode if the job fails.
 
+To configure completion emails without starting another sync, run:
+
+```bash
+sudo ./owncloud/install-sync-notifications.sh
+```
+
+This wraps the scheduled ownCloud mirror, GitLab backup transfer, and
+PostgreSQL backup jobs. Each sends a completion email to
+`hannes.software@gmx.at` with status, times, exit code, and the relevant end of
+the log. Failed PostgreSQL commands now stop the script so failures are
+reported accurately. The installer sends one test email and does not run any
+backup or sync.
+
 On mac2016, the data sync requires Homebrew rsync 3 or newer because the
 system-provided rsync 2.6.9 cannot receive the legacy Latin-1 filenames used
 by some ownCloud files. Install it before the first sync:
