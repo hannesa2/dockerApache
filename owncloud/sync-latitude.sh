@@ -60,6 +60,7 @@ sync_data() {
         --iconv=ISO-8859-1,UTF-8 \
         --rsync-path=/usr/local/bin/rsync \
         --exclude=/.owncloud-mirror-managed \
+        --exclude=/sessions/ \
         --info=progress2,stats1 \
         -e "ssh -i $SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KNOWN_HOSTS" \
         "$SOURCE_DATA/" "$MIRROR_USER@$MIRROR_HOST:$MIRROR_DATA/"
@@ -219,6 +220,8 @@ ssh -i "$SSH_KEY" \
 
 remote "docker compose -f '$COMPOSE_FILE' --profile owncloud run --rm --no-deps --user www-data owncloud php /usr/local/bin/prepare-owncloud-mirror-config"
 remote "docker compose -f '$COMPOSE_FILE' --profile owncloud up -d owncloud"
+remote "docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T owncloud \
+    sh -ec 'mkdir -p /mnt/data/sessions && chown www-data:root /mnt/data/sessions && chmod 0770 /mnt/data/sessions'"
 remote "docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T --user www-data owncloud php /var/www/owncloud/occ maintenance:mode --off"
 remote "docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T --user www-data owncloud php /var/www/owncloud/occ status --output=json"
 remote "'$ACTIVATE_SCRIPT'"

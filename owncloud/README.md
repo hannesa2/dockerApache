@@ -63,6 +63,16 @@ database. Rsync is incremental and removes mirror-only files to keep the
 standby aligned. A failed mirror database restore leaves the mirror in
 maintenance mode rather than serving mismatched data.
 
+The container mounts the T7 data at the same absolute path used on latitude
+(`/daten/owncloud/data`). The copied ownCloud database stores local storage IDs
+with that path; preserving it avoids stale file-cache references. Container
+startup creates the PHP session directory at `/mnt/data/sessions` with access
+for `www-data`, as required by the ownCloud image's PHP configuration. The
+mirror config generator is mounted from this repository so sync runs always
+use the current data-directory setting rather than a stale copy baked into an
+older image. The rsync excludes this runtime-only directory from deletion, and
+the sync recreates it before enabling the mirror after each database restore.
+
 ## Operations
 
 ```bash

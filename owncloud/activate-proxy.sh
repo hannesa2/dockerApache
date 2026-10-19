@@ -39,15 +39,28 @@ PY
 docker compose -f "$APACHE_DIR/docker-compose.yml" exec -T apache apache2ctl -t
 docker compose -f "$APACHE_DIR/docker-compose.yml" exec -T apache apache2ctl graceful
 
-curl --fail --silent --show-error --max-time 30 \
-    https://www16.mxtracks.info:8443/owncloud/status.php \
-    | python3 -c '
+STATUS_BODY="$(mktemp)"
+trap 'rm -f "$STATUS_BODY"' EXIT
+HTTP_STATUS="$(curl --silent --show-error --max-time 30 \
+    --output "$STATUS_BODY" --write-out '%{http_code}' \
+    https://www16.mxtracks.info:8443/owncloud/status.php)" || {
+    echo "ERROR: Could not reach ownCloud status endpoint over HTTPS." >&2
+    exit 1
+}
+if [[ "$HTTP_STATUS" != "200" ]]; then
+    echo "ERROR: ownCloud status endpoint returned HTTP $HTTP_STATUS." >&2
+    cat "$STATUS_BODY" >&2
+    exit 1
+fi
+
+python3 - "$STATUS_BODY" <<'PY'
 import json
 import sys
 
-status = json.load(sys.stdin)
+with open(sys.argv[1], encoding="utf-8") as response:
+    status = json.load(response)
 version = status.get("version", "")
 if not status.get("installed") or not version.startswith("10.13.4"):
     raise SystemExit("ownCloud endpoint did not report an installed 10.13.4 version.")
 print(f"ownCloud {version} is healthy over HTTPS.")
-'
+PY

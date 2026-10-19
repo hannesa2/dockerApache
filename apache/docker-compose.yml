@@ -118,17 +118,26 @@ services:
         condition: service_healthy
     volumes:
       - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/owncloud:/var/www/owncloud
-      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/data:/mnt/data
+      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/data:/daten/owncloud/data
       - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/source-config:/run/owncloud-source-config:ro
       - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/runtime-config:/var/www/owncloud/config
+      - ../owncloud/prepare-mirror-config.php:/usr/local/bin/prepare-owncloud-mirror-config:ro
     environment:
       OWNCLOUD_DB_NAME: ${OWNCLOUD_DB_NAME:-owncloud}
       OWNCLOUD_DB_USER: ${OWNCLOUD_DB_USER:-owncloud}
       OWNCLOUD_DB_PASSWORD: ${OWNCLOUD_DB_PASSWORD:-change-this-owncloud-app-password}
       OWNCLOUD_PUBLIC_HOST: ${OWNCLOUD_PUBLIC_HOST:-www16.mxtracks.info:8443}
+      OWNCLOUD_VOLUME_ROOT: /daten/owncloud/data
       APACHE_LISTEN: "8080"
       APACHE_DOCUMENT_ROOT: /var/www
-    command: ["apache2", "-D", "FOREGROUND"]
+    command:
+      - /bin/bash
+      - -c
+      - |
+        mkdir -p /mnt/data/sessions
+        chown www-data:root /mnt/data/sessions
+        chmod 0770 /mnt/data/sessions
+        exec apache2 -D FOREGROUND
     expose:
       - "8080"
     networks:
