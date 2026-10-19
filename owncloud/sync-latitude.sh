@@ -56,6 +56,8 @@ sync_code() {
 sync_data() {
     echo "Syncing ownCloud data (the initial 438+ GB copy can take hours)..."
     rsync -rltp --delete --partial \
+        --iconv=ISO-8859-1,UTF-8 \
+        --rsync-path=/usr/local/bin/rsync \
         --exclude=/.owncloud-mirror-managed \
         --info=progress2,stats1 \
         -e "ssh -i $SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KNOWN_HOSTS" \
@@ -110,6 +112,11 @@ for marker in \
 done
 remote "test -f '$MIRROR_DATA/.ocdata' && test -d '$MIRROR_CODE' && test -d '$MIRROR_SOURCE_CONFIG'" \
     || die "Destination ownCloud data, code, or config folder is unavailable."
+REMOTE_RSYNC_VERSION="$(remote "rsync --version | sed -n '1s/.*version \\([0-9][0-9]*\\)\\.\\([0-9][0-9]*\\).*/\\1 \\2/p'")"
+read -r REMOTE_RSYNC_MAJOR REMOTE_RSYNC_MINOR <<< "$REMOTE_RSYNC_VERSION"
+if [[ ! "$REMOTE_RSYNC_MAJOR" =~ ^[0-9]+$ ]] || (( REMOTE_RSYNC_MAJOR < 3 )); then
+    die "mac2016 needs rsync 3+ for safe Latin-1 filename conversion; install it with 'brew install rsync' and ensure /usr/local/bin comes before /usr/bin in PATH."
+fi
 remote "docker compose -f '$COMPOSE_FILE' --profile owncloud up -d owncloud-db"
 remote "for attempt in \$(seq 1 60); do
     docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T owncloud-db pg_isready -U postgres -d postgres >/dev/null 2>&1 && exit 0

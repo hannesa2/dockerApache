@@ -32,6 +32,18 @@ is briefly put in maintenance for a final file delta and consistent
 PostgreSQL 14 custom-format database dump. A trap restores source maintenance
 mode if the job fails.
 
+On mac2016, the data sync requires Homebrew rsync 3 or newer because the
+system-provided rsync 2.6.9 cannot receive the legacy Latin-1 filenames used
+by some ownCloud files. Install it before the first sync:
+
+```bash
+brew install rsync
+```
+
+The sync explicitly invokes `/usr/local/bin/rsync` on mac2016 and converts
+Latin-1 filenames to valid UTF-8 for the T7 filesystem. Already transferred
+files are reused on retry.
+
 The T7 tree has explicit safety markers. The sync refuses to run without those
 markers, the source `.ocdata` marker, ownCloud 10.13.4, and the expected source
 database. Rsync is incremental and removes mirror-only files to keep the
