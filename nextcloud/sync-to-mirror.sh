@@ -51,6 +51,18 @@ if [ -z "$MIRROR_HOST" ]; then
     exit 1
 fi
 
+# Safety guard: NEXTCLOUD_DATA_DIR is normally an external, bind-mounted disk.
+# If it isn't actually mounted, it's just an empty directory on the root
+# filesystem and this script's "rsync --delete" would wipe the real data on
+# the mirror while believing the (empty) source is authoritative. Abort hard.
+if ! mountpoint -q "$NEXTCLOUD_DATA_DIR"; then
+    echo "ERROR: '$NEXTCLOUD_DATA_DIR' is not a mounted filesystem (mountpoint -q failed)."
+    echo "       Refusing to sync against what may be an empty placeholder directory"
+    echo "       on the root disk. Check that the data disk is connected and mounted,"
+    echo "       then re-run."
+    exit 1
+fi
+
 # Use login shell on mirror so PATH includes docker/docker compose
 # MIRROR_SHELL=zsh for macOS, bash for Linux
 SSH="ssh -p $MIRROR_SSH_PORT ${MIRROR_USER}@${MIRROR_HOST} $MIRROR_SHELL -l -c"
