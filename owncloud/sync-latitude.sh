@@ -104,7 +104,7 @@ trap cleanup EXIT
 [[ -r "$SSH_KEY" && -r "$KNOWN_HOSTS" ]] || die "Source-to-mac2016 SSH key or known_hosts is unavailable."
 
 SOURCE_VERSION="$(awk -F"'" '/OC_VersionString/ {print $2; exit}' "$SOURCE_CODE/version.php")"
-[[ "$SOURCE_VERSION" == "10.13.4" ]] || die "Expected ownCloud 10.13.4, found ${SOURCE_VERSION:-unknown}."
+[[ "$SOURCE_VERSION" == "10.16.6" ]] || die "Expected ownCloud 10.16.6, found ${SOURCE_VERSION:-unknown}."
 
 for marker in \
     "$MIRROR_ROOT/.owncloud-mirror-managed" \

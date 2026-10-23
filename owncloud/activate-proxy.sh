@@ -60,7 +60,7 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as response:
     status = json.load(response)
 version = status.get("version", "")
-if not status.get("installed") or not version.startswith("10.13.4"):
-    raise SystemExit("ownCloud endpoint did not report an installed 10.13.4 version.")
+if not status.get("installed") or not version.startswith("10.16.6"):
+    raise SystemExit("ownCloud endpoint did not report an installed 10.16.6 version.")
 print(f"ownCloud {version} is healthy over HTTPS.")
 PY
