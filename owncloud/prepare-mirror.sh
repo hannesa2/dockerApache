@@ -34,8 +34,8 @@ DATA_DIR="$OWNCLOUD_MIRROR_DIR/data"
 SOURCE_CONFIG_DIR="$OWNCLOUD_MIRROR_DIR/source-config"
 RUNTIME_CONFIG_DIR="$OWNCLOUD_MIRROR_DIR/runtime-config"
 
-if [[ ! -f "$CODE_DIR/version.php" ]] || ! grep -q "\$OC_VersionString = '10.13.4';" "$CODE_DIR/version.php"; then
-    echo "ERROR: Expected the existing ownCloud 10.13.4 code at $CODE_DIR." >&2
+if [[ ! -f "$CODE_DIR/version.php" ]] || ! grep -q "\$OC_VersionString = '10.16.6';" "$CODE_DIR/version.php"; then
+    echo "ERROR: Expected the existing ownCloud 10.16.6 code at $CODE_DIR." >&2
     exit 1
 fi
 if [[ ! -f "$DATA_DIR/.ocdata" || ! -f "$CODE_DIR/config/config.php" ]]; then
@@ -93,5 +93,5 @@ docker compose -f "$APACHE_DIR/docker-compose.yml" up -d apache
 docker compose -f "$APACHE_DIR/docker-compose.yml" exec -T apache apache2ctl -t
 docker compose -f "$APACHE_DIR/docker-compose.yml" exec -T apache apache2ctl graceful
 
-echo "Prepared ownCloud 10.13.4 mirror storage and PHP 7.4 image."
+echo "Prepared ownCloud 10.16.6 mirror storage and PHP 7.4 image."
 echo "Run sudo ./owncloud/install-latitude-sync.sh on latitude for the initial sync and daily schedule."
