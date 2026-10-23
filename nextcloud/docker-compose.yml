@@ -133,6 +133,14 @@ services:
       # Use this for other services (Apache, etc.) that share the same server.
       # Example:  EXTRA_LOCAL_DOMAINS=www.mxtracks.info dev.mxtracks.info
       EXTRA_LOCAL_DOMAINS: ${EXTRA_LOCAL_DOMAINS:-}
+      # Mirror domains (e.g. www16/dev16.mxtracks.info) resolve to a DIFFERENT
+      # host (the mac2016 mirror, not latitude) – needed because Fritz!Box has
+      # no NAT loopback, so LAN clients can't reach the mirror via its public
+      # DNS name/port-forward while at home.
+      # Example:  MIRROR_LOCAL_IP=192.168.178.70
+      #           MIRROR_EXTRA_DOMAINS=www16.mxtracks.info dev16.mxtracks.info
+      MIRROR_LOCAL_IP: ${MIRROR_LOCAL_IP:-}
+      MIRROR_EXTRA_DOMAINS: ${MIRROR_EXTRA_DOMAINS:-}
     entrypoint: []
     command:
       - /bin/sh
@@ -167,6 +175,14 @@ services:
               echo "address=/$$d/::"
             fi
           done
+
+          # ── Mirror domains (resolve to mac2016, not latitude) ───────────
+          if [ -n "$$MIRROR_LOCAL_IP" ]; then
+            for d in $$MIRROR_EXTRA_DOMAINS; do
+              echo "address=/$$d/$$MIRROR_LOCAL_IP"
+              echo "address=/$$d/::"
+            done
+          fi
 
           # ── IPv6 ULA overrides (when latitude has a stable private IPv6) ─
           if [ -n "$$NEXTCLOUD_LOCAL_IPV6" ]; then
