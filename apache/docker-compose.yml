@@ -82,7 +82,7 @@ services:
       - apache_net
 
   owncloud-db:
-    image: postgres:14-alpine
+    image: postgres:16-alpine
     profiles:
       - owncloud
     restart: unless-stopped
