@@ -54,12 +54,15 @@ MIRROR_EXTRA_PATH="${MIRROR_EXTRA_PATH:-/usr/local/bin}"
 MIRROR_SHELL="${MIRROR_SHELL:-zsh}"
 
 # ── Site definitions ──────────────────────────────────────────────────────────
-# SUBDIR | DB_NAME | DB_USER | DB_PASS | MIRROR_DOMAIN | WP_SUBPATH | SOURCE_DOMAIN
-# SOURCE_DOMAIN: the production hostname whose URLs get replaced by MIRROR_DOMAIN
-#   in all synced text files (index.html, .htaccess, wp-config.php, *.conf, …)
+# SUBDIR | DB_NAME | DB_USER | DB_PASS | MIRROR_DOMAIN | WP_SUBPATH | SOURCE_DOMAINS
+# SOURCE_DOMAINS: comma-separated list of production hostnames whose URLs get
+#   replaced by MIRROR_DOMAIN in all synced text files (index.html, .htaccess,
+#   wp-config.php, *.conf, …). Include BOTH the "copy" domain used internally
+#   AND the real production domain if any static files reference it directly
+#   (e.g. a static redirect page hardcoding the real prod hostname).
 declare -a SITES=(
-  "dev.mxtracks|wordpress|wordpressuser|V€spa125|dev16.mxtracks.info|/wordpress|devcopy.mxtracks.info"
-  "mxdocs|wordpress_mxtracks|wpuser_mxtracks|Us€r.vespa125|www16.mxtracks.info|/wordpress|wwwcopy.mxtracks.info"
+  "dev.mxtracks|wordpress|wordpressuser|V€spa125|dev16.mxtracks.info|/wordpress|devcopy.mxtracks.info,dev.mxtracks.info"
+  "mxdocs|wordpress_mxtracks|wpuser_mxtracks|Us€r.vespa125|www16.mxtracks.info|/wordpress|wwwcopy.mxtracks.info,www.mxtracks.info"
 )
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
@@ -173,7 +176,7 @@ log "    Patcher uploaded."
 
 # ── Process each site ─────────────────────────────────────────────────────────
 for site_def in "${SITES[@]}"; do
-    IFS='|' read -r SUBDIR DB_NAME DB_USER DB_PASS MIRROR_DOMAIN WP_SUBPATH SOURCE_DOMAIN <<< "$site_def"
+    IFS='|' read -r SUBDIR DB_NAME DB_USER DB_PASS MIRROR_DOMAIN WP_SUBPATH SOURCE_DOMAINS <<< "$site_def"
     SOURCE_DOCROOT="$APACHE_DATA_DIR/www/$SUBDIR"
     MIRROR_DOCROOT="$MIRROR_DATA_DIR/www/$SUBDIR"
 
@@ -227,21 +230,37 @@ SQL"
         | awk '/\/$/ || /^sending/ || /^sent /' || true
     log "    Rsync done."
 
-    # ── 3b. Replace source domain with mirror domain in text files ───────────
+    # ── 3b. Replace source domain(s) with mirror domain in text files ────────
+    # NOTE: runs via plain SSH directly on the mirror host (macOS) -> BSD sed,
+    # not GNU sed. `sed -i '...'` (GNU style, no backup suffix) is silently
+    # broken there: BSD sed treats the script as the backup suffix and then
+    # fails with "unterminated substitute", leaving the file UNCHANGED - this
+    # is why domain substitution has been a silent no-op (the surrounding
+    # `|| true` swallowed the error). Fixed by passing an explicit empty
+    # suffix (`sed -i ''`). Also now appends :MIRROR_HTTPS_PORT to https://
+    # URLs (bare domain mentions, e.g. in vhost ServerAlias, are left
+    # port-less as before).
     log ""
-    log "==> 3b. Replacing '${SOURCE_DOMAIN}' → '${MIRROR_DOMAIN}' in text files ..."
-    # Targets: *.html, *.htm, *.php, *.conf, *.htaccess, *.js, *.css, *.txt, *.xml
-    # Uses grep -rl to find only files that actually contain the string (fast).
-    remote "find '${MIRROR_DOCROOT}' -type f \( \
-        -name '*.html' -o -name '*.htm' -o -name '*.php' \
-        -o -name '*.conf' -o -name '.htaccess' \
-        -o -name '*.js'  -o -name '*.css' \
-        -o -name '*.txt' -o -name '*.xml' \
-        \) -exec grep -lF '${SOURCE_DOMAIN}' {} + 2>/dev/null \
-        | while read -r f; do
-            sed -i 's|${SOURCE_DOMAIN}|${MIRROR_DOMAIN}|g' \"\$f\"
-            echo \"  patched: \$f\"
-          done" | tee -a "$LOG" || true
+    log "==> 3b. Replacing source domain(s) with '${MIRROR_DOMAIN}:${MIRROR_HTTPS_PORT}' in text files ..."
+    IFS=',' read -ra SRC_DOMAIN_LIST <<< "$SOURCE_DOMAINS"
+    for SRC_DOMAIN in "${SRC_DOMAIN_LIST[@]}"; do
+        log "    Source domain: '${SRC_DOMAIN}'"
+        # Targets: *.html, *.htm, *.php, *.conf, *.htaccess, *.js, *.css, *.txt, *.xml
+        # Uses grep -rl to find only files that actually contain the string (fast).
+        remote "find '${MIRROR_DOCROOT}' -type f \( \
+            -name '*.html' -o -name '*.htm' -o -name '*.php' \
+            -o -name '*.conf' -o -name '.htaccess' \
+            -o -name '*.js'  -o -name '*.css' \
+            -o -name '*.txt' -o -name '*.xml' \
+            \) -exec grep -lF '${SRC_DOMAIN}' {} + 2>/dev/null \
+            | while read -r f; do
+                sed -i '' \
+                    -e 's|https://${SRC_DOMAIN}|https://${MIRROR_DOMAIN}:${MIRROR_HTTPS_PORT}|g' \
+                    -e 's|${SRC_DOMAIN}|${MIRROR_DOMAIN}|g' \
+                    \"\$f\"
+                echo \"  patched: \$f\"
+              done" | tee -a "$LOG" || true
+    done
     log "    Domain substitution done."
 
     # ── 4. Patch wp-config.php on mirror ─────────────────────────────────────
@@ -369,8 +388,8 @@ log "═════════════════════════
 log ""
 log "MIRROR DOMAINS"
 for site_def in "${SITES[@]}"; do
-    IFS='|' read -r _ _ _ _ MIRROR_DOMAIN WP_SUBPATH SOURCE_DOMAIN <<< "$site_def"
-    log "  https://${MIRROR_DOMAIN}:${MIRROR_HTTPS_PORT}${WP_SUBPATH}  (source: ${SOURCE_DOMAIN})"
+    IFS='|' read -r _ _ _ _ MIRROR_DOMAIN WP_SUBPATH SOURCE_DOMAINS <<< "$site_def"
+    log "  https://${MIRROR_DOMAIN}:${MIRROR_HTTPS_PORT}${WP_SUBPATH}  (source: ${SOURCE_DOMAINS})"
 done
 log ""
 log "POST-SETUP on ${MIRROR_HOST} (one-time, if not done yet)"
@@ -387,7 +406,7 @@ done
 log ""
 log "  WP-CLI search-replace (run after DNS is live, once per site):"
 for site_def in "${SITES[@]}"; do
-    IFS='|' read -r SUBDIR _ _ _ MIRROR_DOMAIN WP_SUBPATH SOURCE_DOMAIN <<< "$site_def"
+    IFS='|' read -r SUBDIR _ _ _ MIRROR_DOMAIN WP_SUBPATH SOURCE_DOMAINS <<< "$site_def"
     log "  ssh ${MIRROR_HOST} \"cd ${MIRROR_APACHE_DIR} && \\"
     log "    docker compose exec --user www-data apache wp \\"
     log "      --path=/var/www/html/${SUBDIR}${WP_SUBPATH} \\"
