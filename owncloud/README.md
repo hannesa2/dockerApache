@@ -2,8 +2,22 @@
 
 The production ownCloud at latitude is version 10.13.4, which rejects PHP 8.0
 and newer. Its mirror therefore uses the isolated official
-`owncloud/server:10.13.4` image, whose runtime is PHP 7.4; it is not executed by
-the main PHP 8.3 Apache container.
+`owncloud/server:10.16.6` image, whose runtime is PHP 7.4 (currently 7.4.33);
+it is not executed by the main PHP 8.3 Apache container. Only the image's
+Apache/PHP runtime is used — the actual ownCloud application code and config
+are bind-mounted in from the mirrored data (see below), so the image's own
+embedded ownCloud version is irrelevant and can be moved forward within the
+10.x line independently of the production application version.
+
+The image tag is intentionally newer than the mounted 10.13.4 application:
+`10.13.4` itself is a stale, no-longer-rebuilt point release pinned to Ubuntu
+20.04, whose bundled PHP 7.4.3 only receives security backports through paid
+Ubuntu Pro ESM. `10.16.6` is ownCloud's actively maintained current 10.x
+release, rebuilt on Ubuntu 22.04 with an up-to-date, patched PHP 7.4 — e.g. it
+already carries the October 2026 "php2shell" fixes
+(CVE-2026-109618 / CVE-2026-109619). Re-pull/rebuild this image periodically
+(`docker compose build owncloud`) to keep picking up PHP security fixes,
+independently of any ownCloud application upgrade.
 
 ## mac2016 setup
 
@@ -89,4 +103,7 @@ The mirror remains a standby, not a second independent writer. Its writes are
 replaced by the next daily source sync. ownCloud 10.13.4 and PHP 7.4 are both
 legacy software; the dedicated runtime is for compatibility and should be
 upgraded separately rather than changing the production-matched backup code
-in place.
+in place. "Upgraded separately" means bumping the `owncloud/server` image tag
+in [`Dockerfile`](Dockerfile) to a current 10.x release for a patched PHP 7.4
+runtime (see above) — not touching the mounted 10.13.4 application code, which
+must keep matching latitude's real production version.
