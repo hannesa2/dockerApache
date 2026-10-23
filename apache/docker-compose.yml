@@ -31,8 +31,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      github-artifacts:
-        condition: service_healthy
     ports:
       - "${APACHE_HTTP_PORT:-8080}:80"
       - "${APACHE_HTTPS_PORT:-8443}:443"
@@ -65,6 +63,8 @@ services:
       dockerfile: github-artifacts/Dockerfile
       args:
         APP_VERSION: b657c71b4e025bfdcc4f2418c70e15301010b62a
+    profiles:
+      - github-artifacts
     restart: unless-stopped
     user: "${GITHUB_ARTIFACTS_UID:-501}:${GITHUB_ARTIFACTS_GID:-20}"
     volumes:
