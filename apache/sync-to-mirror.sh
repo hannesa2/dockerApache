@@ -45,6 +45,11 @@ MIRROR_APACHE_DIR="${MIRROR_APACHE_DIR:-~/git/dockerApache/apache}"
 MIRROR_DATA_DIR="${MIRROR_DATA_DIR:-$MIRROR_APACHE_DIR/data}"
 MIRROR_MYSQL_ROOT_PASSWORD="${MIRROR_MYSQL_ROOT_PASSWORD:-changeme_root}"
 MIRROR_HTTP_PORT="${MIRROR_HTTP_PORT:-8080}"
+# External HTTPS port the mirror is reachable on (matches APACHE_HTTPS_PORT in
+# the mirror's own .env / docker-compose.yml port mapping, default 8443).
+# Must be included in WP_HOME/WP_SITEURL/siteurl/home or WordPress's canonical
+# redirect strips it and the site becomes unreachable on the mirror.
+MIRROR_HTTPS_PORT="${MIRROR_HTTPS_PORT:-8443}"
 MIRROR_EXTRA_PATH="${MIRROR_EXTRA_PATH:-/usr/local/bin}"
 MIRROR_SHELL="${MIRROR_SHELL:-zsh}"
 
@@ -249,7 +254,7 @@ SQL"
     # the whole GNU vs. BSD sed -i incompatibility.
     log ""
     log "==> 4. Patching wp-config.php on mirror ..."
-    MIRROR_URL="https://${MIRROR_DOMAIN}${WP_SUBPATH}"
+    MIRROR_URL="https://${MIRROR_DOMAIN}:${MIRROR_HTTPS_PORT}${WP_SUBPATH}"
     for WP_CFG_REL in "wp-config.php" "wordpress/wp-config.php"; do
         MIRROR_WP_CFG="${MIRROR_DOCROOT}/${WP_CFG_REL}"
         remote "[ -f '${MIRROR_WP_CFG}' ] && python3 /tmp/wp-config-patch.py '${MIRROR_WP_CFG}' '${MIRROR_URL}' || true" \
@@ -276,7 +281,7 @@ SQL"
         docker compose exec -T db mysql \
             -u root -p'${MIRROR_MYSQL_ROOT_PASSWORD}' '${DB_NAME}' \
             -e \"UPDATE \\\`${WP_PREFIX}options\\\`
-                    SET option_value = 'https://${MIRROR_DOMAIN}${WP_SUBPATH}'
+                    SET option_value = 'https://${MIRROR_DOMAIN}:${MIRROR_HTTPS_PORT}${WP_SUBPATH}'
                  WHERE option_name IN ('siteurl','home');
                  SELECT option_name, option_value
                    FROM \\\`${WP_PREFIX}options\\\`
@@ -365,7 +370,7 @@ log ""
 log "MIRROR DOMAINS"
 for site_def in "${SITES[@]}"; do
     IFS='|' read -r _ _ _ _ MIRROR_DOMAIN WP_SUBPATH SOURCE_DOMAIN <<< "$site_def"
-    log "  https://${MIRROR_DOMAIN}${WP_SUBPATH}  (source: ${SOURCE_DOMAIN})"
+    log "  https://${MIRROR_DOMAIN}:${MIRROR_HTTPS_PORT}${WP_SUBPATH}  (source: ${SOURCE_DOMAIN})"
 done
 log ""
 log "POST-SETUP on ${MIRROR_HOST} (one-time, if not done yet)"
@@ -386,7 +391,7 @@ for site_def in "${SITES[@]}"; do
     log "  ssh ${MIRROR_HOST} \"cd ${MIRROR_APACHE_DIR} && \\"
     log "    docker compose exec --user www-data apache wp \\"
     log "      --path=/var/www/html/${SUBDIR}${WP_SUBPATH} \\"
-    log "      search-replace 'https://devcopy.mxtracks.info' 'https://${MIRROR_DOMAIN}' \\"
+    log "      search-replace 'https://devcopy.mxtracks.info' 'https://${MIRROR_DOMAIN}:${MIRROR_HTTPS_PORT}' \\"
     log "      --all-tables --skip-columns=guid\""
 done
 log ""
