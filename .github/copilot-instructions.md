@@ -28,6 +28,8 @@ dockerApache/
 │   ├── .env.example
 │   ├── backup.sh               # Backup MySQL + web root + vhosts
 │   ├── restore.sh              # Restore from backup
+│   ├── migrate-native-to-docker.sh # One-shot migration from native Apache+MySQL
+│   ├── sync-to-mirror.sh       # Live stream source → mirror (no temp files)
 │   ├── VHOST_SAMPLE.md         # Virtual host setup guide
 │   └── sample-data/            # Sample vhost configs and index.php
 │       ├── vhosts/
@@ -259,3 +261,115 @@ OWNCLOUD_URL=http://localhost/owncloud
 OWNCLOUD_ADMIN_USER=admin
 OWNCLOUD_ADMIN_PASSWORD=secret
 ```
+
+---
+
+## Apache stack – native-to-Docker migration
+
+`apache/migrate-native-to-docker.sh` handles a one-shot migration of existing
+native Apache + MySQL websites into the Docker Apache stack.
+
+### Sites migrated (latitude server)
+
+| Native docroot | Docker www subdir | New (copy) domain |
+|----------------|-------------------|-------------------|
+| `/srv/www/vhosts/dev.mxtracks` | `dev.mxtracks` | `devcopy.mxtracks.info` |
+| `/srv/www/vhosts/mxdocs` | `mxdocs` | `wwwcopy.mxtracks.info` |
+
+Native and Docker stacks run **side-by-side** during the transition period:
+- Native Apache remains on ports 80/443, serving the original domains.
+- Docker container runs on ports 8081/8444; native Apache proxies the *copy* domains to it.
+
+### What the script does
+1. `docker compose up -d --build` – starts the stack (safe to re-run).
+2. `sudo rsync` each web root into `$APACHE_DATA_DIR/www/<subdir>/`.
+3. `convmv` pass to fix any ISO-8859-1 filenames.
+4. `mysqldump` each database via the native MySQL WordPress user.
+5. Creates DB + user in Docker MySQL (`CREATE DATABASE IF NOT EXISTS …`).
+6. Imports the dump via the Docker MySQL root user.
+7. Patches `wp-config.php`: `DB_HOST localhost` → `db` (Docker service name).
+8. Writes a Docker vhost config into `$APACHE_DATA_DIR/vhosts/<domain>.conf`.
+9. Writes a native-Apache reverse-proxy snippet (`native-proxy-<domain>.conf`).
+10. `apache2ctl graceful` inside the container to pick up new vhosts.
+
+### Running the migration
+```bash
+# On latitude (interactive session – sudo required):
+cd ~/git/dockerApache/apache
+cp .env.example .env   # set MYSQL_ROOT_PASSWORD to a strong password
+./migrate-native-to-docker.sh
+```
+
+### Post-migration steps (printed by the script)
+```bash
+sudo a2enmod proxy proxy_http
+sudo cp native-proxy-devcopy.mxtracks.info.conf /etc/apache2/sites-available/
+sudo a2ensite devcopy.mxtracks.info.conf
+sudo certbot --apache -d devcopy.mxtracks.info
+sudo apache2ctl configtest && sudo systemctl reload apache2
+```
+
+### Multi-database approach
+`MYSQL_DATABASE` in `.env` creates one initial DB. The migration script creates
+additional databases (`wordpress`, `wordpress_mxtracks`) directly via the root
+user after the container starts — no extra `docker-compose.yml` changes needed.
+
+### WordPress URL fix
+After DNS points to the new domain, run per site:
+```bash
+docker compose exec apache wp --path=/var/www/html/<subdir>/wordpress \
+  search-replace 'https://<old-domain>' 'https://<new-domain>' \
+  --all-tables --skip-columns=guid
+```
+
+---
+
+## Apache stack – mirror sync
+
+`apache/sync-to-mirror.sh` streams the running Docker Apache+WordPress stack from
+the source server (latitude) to a standby mirror (mac2016).
+
+### Topology
+| Role | Host | OS | Data path |
+|------|------|----|-----------|
+| **Source** (production) | `latitude` | Ubuntu Linux | `APACHE_DATA_DIR=/srv/www.docker` |
+| **Mirror** (standby) | `mac2016` | macOS | `MIRROR_DATA_DIR=~/git/dockerApache/apache/data` |
+
+### Site mapping
+| Source domain | Mirror domain | DB | www subdir |
+|---------------|--------------|-----|------------|
+| `devcopy.mxtracks.info` | `dev16.mxtracks.info` | `wordpress` | `dev.mxtracks` |
+| `wwwcopy.mxtracks.info` | `www16.mxtracks.info` | `wordpress_mxtracks` | `mxdocs` |
+
+### What it does (per site)
+1. Prepares / starts mirror Docker stack (starts Docker Desktop on macOS if needed)
+2. Drops + recreates DB on mirror, streams `mysqldump` source → mirror via SSH pipe
+3. `rsync --delete` web root source → mirror (incremental, no temp files)
+4. Patches `wp-config.php` on mirror (`WP_HOME`, `WP_SITEURL`, `DB_HOST`, HTTPS proxy detection)
+5. Sets `siteurl` / `home` WordPress options directly in mirror DB
+6. Writes mirror vhost config into `MIRROR_DATA_DIR/vhosts/<domain>.conf`
+7. `apache2ctl graceful` inside mirror container
+
+### Running
+```bash
+# On latitude (interactive session):
+cd ~/git/dockerApache/apache
+./sync-to-mirror.sh
+
+# Nightly cron:
+0 3 * * * /home/hannes/git/dockerApache/apache/sync-to-mirror.sh >> /var/log/apache-mirror-$(date +\%Y\%m\%d).log 2>&1
+```
+
+### Key `.env` variables for sync
+```dotenv
+MIRROR_HOST=mac2016
+MIRROR_USER=hannes
+MIRROR_SSH_PORT=22
+MIRROR_APACHE_DIR=~/git/dockerApache/apache
+MIRROR_DATA_DIR=~/git/dockerApache/apache/data
+MIRROR_MYSQL_ROOT_PASSWORD=changeme_root
+MIRROR_HTTP_PORT=8080
+MIRROR_EXTRA_PATH=/usr/local/bin    # Docker Desktop on macOS
+MIRROR_SHELL=zsh
+```
+

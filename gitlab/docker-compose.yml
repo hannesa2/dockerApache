@@ -1,0 +1,35 @@
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:19.4.1-ce.0
+    container_name: gitlab16
+    hostname: git16.mxtracks.info
+    restart: unless-stopped
+    shm_size: "256m"
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'https://git16.mxtracks.info:9443'
+        gitlab_rails['nginx']['listen_port'] = 80
+        gitlab_rails['nginx']['listen_https'] = false
+        gitlab_rails['nginx']['proxy_set_headers'] = {
+          'Host' => '$$http_host',
+          'X-Real-IP' => '$$remote_addr',
+          'X-Forwarded-For' => '$$proxy_add_x_forwarded_for',
+          'X-Forwarded-Host' => '$$http_host',
+          'X-Forwarded-Port' => '9443',
+          'X-Forwarded-Proto' => 'https',
+          'X-Forwarded-Ssl' => 'on'
+        }
+        letsencrypt['enable'] = false
+        gitlab_rails['backup_path'] = '/gitlab-backup-archives'
+    volumes:
+      - ${GITLAB_DATA_DIR:-/Volumes/SamsungT5_1T/gitlab}/config:/etc/gitlab
+      - ${GITLAB_DATA_DIR:-/Volumes/SamsungT5_1T/gitlab}/logs:/var/log/gitlab
+      - ${GITLAB_DATA_DIR:-/Volumes/SamsungT5_1T/gitlab}/data:/var/opt/gitlab
+      - ${GITLAB_BACKUP_DIR:-/Volumes/SamsungT5_1T/gitlab/backups}:/gitlab-backup-archives
+    networks:
+      - gitlab_proxy
+
+networks:
+  gitlab_proxy:
+    external: true
+    name: gitlab_proxy

@@ -1,0 +1,96 @@
+--- a/main.py
++++ b/main.py
+@@ -4,6 +4,7 @@
+ import socket
+ from functools import wraps
+ 
++from werkzeug.middleware.proxy_fix import ProxyFix
+ import yaml
+ from flask import Flask, render_template, request, redirect, flash, url_for, send_from_directory, Response, jsonify
+ from werkzeug.utils import secure_filename
+@@ -19,12 +20,19 @@
+ 
+ if os.path.isfile('parameter.yml'):
+     with open('parameter.yml', 'r') as file:
+         prime_service = yaml.safe_load(file)
+-        if __name__ == '__main__':
+-            UPLOAD_FOLDER = prime_service['file']['directory']
+-            AUTH_USER = prime_service['authentication']['username']
+-            AUTH_PASSWORD = prime_service['authentication']['password']
+-            SUB_URL = prime_service['server']['sub_url']
++        UPLOAD_FOLDER = prime_service['file']['directory']
++        AUTH_USER = prime_service['authentication']['username']
++        AUTH_PASSWORD = prime_service['authentication']['password']
++        SUB_URL = prime_service['server']['sub_url']
++else:
++    raise RuntimeError('parameter.yml is required')
++
++app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
++app.secret_key = os.environ.get('APP_SECRET_KEY', os.urandom(32))
++app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
++app.config['MAX_CONTENT_LENGTH'] = 6000024
++os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+ 
+ 
+ def basic_auth_required(f):
+@@ -51,6 +60,9 @@
+ # from https://github.com/hannesa2/surveillanceBackend/blob/master/main.py#L35-L54
+ @app.route('/version')
+ def version():
++    if os.environ.get('APP_VERSION'):
++        return jsonify({'version': os.environ['APP_VERSION']}), 200
++
+     execute_path = os.path.dirname(__file__)
+     try:
+         version_tag = subprocess.check_output(['git', 'describe', '--tags'], cwd=execute_path).decode('ascii').strip()
+@@ -87,7 +99,7 @@
+         if file and allowed_file(file.filename):
+             filename = secure_filename(file.filename)
+             file.save(os.path.join(app.config['UPLOAD_FOLDER'], prefix+filename))
+-            app.logger.debug("redirectTo: " + SUB_URL + url_for('download_file', name=prefix+filename))
+-            return redirect(SUB_URL + url_for('download_file', name=prefix+filename))
++            app.logger.debug("redirectTo: " + url_for('download_file', name=prefix+filename))
++            return redirect(url_for('download_file', name=prefix+filename))
+         else:
+             return "File not allowed", 400
+--- a/templates/index.html
++++ b/templates/index.html
+@@ -1,6 +1,6 @@
+ <!DOCTYPE html>
+ <script>
+-fetch('/version')
++fetch('{{ url_for("version") }}')
+   .then(response => response.json())
+   .then(data => {
+     document.getElementById('version-info').textContent = JSON.stringify(data, null, 2);
+@@ -20,8 +20,8 @@
+         {% endfor %}
+     </ul>
+     <hr>
+     <h2>Update File:</h2>
+-    <form action="/update" method="post">
++    <form action="{{ url_for('update') }}" method="post">
+         <input type="text" name="old_name" placeholder="Old name" required>
+         <input type="text" name="new_name" placeholder="New name" required>
+         <input type="submit" value="Update">
+@@ -41,17 +41,17 @@
+     <hr>
+     <h2>Delete File:</h2>
+-    <form action="/delete" method="post">
++    <form action="{{ url_for('delete') }}" method="post">
+         <input type="text" name="name" placeholder="File name" required>
+         <input type="submit" value="Delete">
+     </form>
+     <hr>
+     <h2>Get File:</h2>
+-    <form action="/get" method="get">
++    <form action="{{ url_for('get') }}" method="get">
+         <input type="text" name="name" placeholder="File name" required>
+         <input type="submit" value="Get">
+     </form>
+     <h1>Upload new File</h1>
+-    <form method=post enctype=multipart/form-data>
++    <form action="{{ url_for('index') }}" method="post" enctype=multipart/form-data>
+       <input type=file name=file>
+       <input type=submit value=Upload>
+     </form>

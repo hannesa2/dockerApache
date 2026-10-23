@@ -1,0 +1,158 @@
+# Usage:
+#   APACHE_DATA_DIR=/your/data/path docker compose up -d
+# Or copy .env.example to .env and adjust before running:
+#   docker compose up -d
+
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    volumes:
+      - ${APACHE_DATA_DIR:-./data}/mysql:/var/lib/mysql
+      - ${APACHE_DATA_DIR:-./data}/mysql-config:/etc/mysql/conf.d
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-changeme_root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-webapp}
+      MYSQL_USER: ${MYSQL_USER:-webapp}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-changeme_db}
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-changeme_root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - apache_net
+
+  apache:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      github-artifacts:
+        condition: service_healthy
+    ports:
+      - "${APACHE_HTTP_PORT:-8080}:80"
+      - "${APACHE_HTTPS_PORT:-8443}:443"
+      - "${APACHE_HTTPS_MIRROR_PORT:-9444}:443"
+    volumes:
+      # Web root – put your PHP/HTML files here
+      - ${APACHE_DATA_DIR:-./data}/www:/var/www/html
+      # Apache vhost configs
+      - ${APACHE_DATA_DIR:-./data}/vhosts:/etc/apache2/sites-enabled
+      # TLS certificates for local HTTPS vhosts
+      - ${APACHE_DATA_DIR:-./data}/certs:/etc/apache2/certs:ro
+      # Apache logs
+      - ${APACHE_DATA_DIR:-./data}/logs/apache:/var/log/apache2
+      # Optional custom php.ini overrides
+      - ${APACHE_DATA_DIR:-./data}/php-config:/usr/local/etc/php/conf.d/custom
+    environment:
+      MYSQL_HOST: db
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-webapp}
+      MYSQL_USER: ${MYSQL_USER:-webapp}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-changeme_db}
+      APACHE_SERVER_NAME: ${APACHE_SERVER_NAME:-localhost}
+    networks:
+      - apache_net
+      - gitlab_proxy
+      - owncloud_proxy
+
+  github-artifacts:
+    build:
+      context: ..
+      dockerfile: github-artifacts/Dockerfile
+      args:
+        APP_VERSION: b657c71b4e025bfdcc4f2418c70e15301010b62a
+    restart: unless-stopped
+    user: "${GITHUB_ARTIFACTS_UID:-501}:${GITHUB_ARTIFACTS_GID:-20}"
+    volumes:
+      - ${GITHUB_ARTIFACTS_DATA_DIR:-/Volumes/SamsungT5_1T/githubArtifactsPy}/files:/app/files
+      - ${GITHUB_ARTIFACTS_DATA_DIR:-/Volumes/SamsungT5_1T/githubArtifactsPy}/parameter.yml:/app/parameter.yml:ro
+    expose:
+      - "5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:5000/', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - apache_net
+
+  owncloud-db:
+    image: postgres:14-alpine
+    profiles:
+      - owncloud
+    restart: unless-stopped
+    volumes:
+      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/postgres:/var/lib/postgresql/data
+      - ../owncloud/init-db.sh:/docker-entrypoint-initdb.d/10-create-owncloud-db.sh:ro
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${OWNCLOUD_POSTGRES_SUPERUSER_PASSWORD:-change-this-owncloud-db-password}
+      OWNCLOUD_DB_NAME: ${OWNCLOUD_DB_NAME:-owncloud}
+      OWNCLOUD_DB_USER: ${OWNCLOUD_DB_USER:-owncloud}
+      OWNCLOUD_DB_PASSWORD: ${OWNCLOUD_DB_PASSWORD:-change-this-owncloud-app-password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - owncloud_db
+
+  owncloud:
+    build:
+      context: ../owncloud
+      dockerfile: Dockerfile
+      args:
+        OWNCLOUD_UID: ${OWNCLOUD_UID:-504}
+    profiles:
+      - owncloud
+    restart: unless-stopped
+    depends_on:
+      owncloud-db:
+        condition: service_healthy
+    volumes:
+      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/owncloud:/var/www/owncloud
+      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/data:/daten/owncloud/data
+      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/source-config:/run/owncloud-source-config:ro
+      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/runtime-config:/var/www/owncloud/config
+      - ../owncloud/prepare-mirror-config.php:/usr/local/bin/prepare-owncloud-mirror-config:ro
+    environment:
+      OWNCLOUD_DB_NAME: ${OWNCLOUD_DB_NAME:-owncloud}
+      OWNCLOUD_DB_USER: ${OWNCLOUD_DB_USER:-owncloud}
+      OWNCLOUD_DB_PASSWORD: ${OWNCLOUD_DB_PASSWORD:-change-this-owncloud-app-password}
+      OWNCLOUD_PUBLIC_HOST: ${OWNCLOUD_PUBLIC_HOST:-www16.mxtracks.info:8443}
+      OWNCLOUD_VOLUME_ROOT: /daten/owncloud/data
+      APACHE_LISTEN: "8080"
+      APACHE_DOCUMENT_ROOT: /var/www
+    command:
+      - /bin/bash
+      - -c
+      - |
+        mkdir -p /mnt/data/sessions
+        chown www-data:root /mnt/data/sessions
+        chmod 0770 /mnt/data/sessions
+        exec apache2 -D FOREGROUND
+    expose:
+      - "8080"
+    networks:
+      - owncloud_db
+      - owncloud_proxy
+
+networks:
+  apache_net:
+    driver: bridge
+  gitlab_proxy:
+    name: gitlab_proxy
+    driver: bridge
+  owncloud_db:
+    name: owncloud_db
+    driver: bridge
+  owncloud_proxy:
+    name: owncloud_proxy
+    driver: bridge
