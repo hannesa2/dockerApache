@@ -122,6 +122,50 @@ remote "cd '$MIRROR_APACHE_DIR' && \
     || die "Mirror MySQL not ready after 60s – check: ssh ${MIRROR_HOST} 'cd ${MIRROR_APACHE_DIR} && docker compose logs db'"
 log "    Mirror MySQL ready."
 
+# ── Upload wp-config.php patcher once (portable: works with python3 on any OS) ─
+# Avoids GNU-vs-BSD `sed -i` incompatibility (mirror is macOS = BSD sed) and
+# multi-layer shell/heredoc escaping bugs that previously caused this patch
+# step to silently corrupt or skip WP_HOME/WP_SITEURL replacement.
+log ""
+log "==> Uploading wp-config.php patcher to mirror ..."
+PATCH_SCRIPT_LOCAL="$(mktemp)"
+trap 'rm -f "$PATCH_SCRIPT_LOCAL"' EXIT
+cat > "$PATCH_SCRIPT_LOCAL" <<'PYEOF'
+import re, sys
+
+path, mirror_url = sys.argv[1], sys.argv[2]
+with open(path, 'r') as f:
+    content = f.read()
+
+content = content.replace("'DB_HOST', 'localhost'", "'DB_HOST', 'db'")
+
+for const in ('WP_SITEURL', 'WP_HOME'):
+    content = re.sub(
+        r"'" + const + r"', '(https?://[^']*)'",
+        "'" + const + "', '" + mirror_url + "'",
+        content,
+    )
+
+if 'HTTP_X_FORWARDED_PROTO' not in content:
+    proxy_snippet = (
+        "<?php\n"
+        "// Detect HTTPS behind reverse proxy\n"
+        "if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && "
+        "'https' === $_SERVER['HTTP_X_FORWARDED_PROTO']) {\n"
+        "    $_SERVER['HTTPS'] = 'on';\n"
+        "}"
+    )
+    content = content.replace('<?php', proxy_snippet, 1)
+
+with open(path, 'w') as f:
+    f.write(content)
+print('Patched: ' + path)
+PYEOF
+scp -P "$MIRROR_SSH_PORT" "$PATCH_SCRIPT_LOCAL" \
+    "${MIRROR_USER}@${MIRROR_HOST}:/tmp/wp-config-patch.py" >/dev/null \
+    || die "Failed to upload wp-config.php patcher to mirror"
+log "    Patcher uploaded."
+
 # ── Process each site ─────────────────────────────────────────────────────────
 for site_def in "${SITES[@]}"; do
     IFS='|' read -r SUBDIR DB_NAME DB_USER DB_PASS MIRROR_DOMAIN WP_SUBPATH SOURCE_DOMAIN <<< "$site_def"
@@ -196,25 +240,19 @@ SQL"
     log "    Domain substitution done."
 
     # ── 4. Patch wp-config.php on mirror ─────────────────────────────────────
+    # NOTE: this patch runs via plain SSH directly on the mirror host (macOS),
+    # NOT inside the Linux container - so its native `sed` is BSD sed, whose
+    # `-i` option has different (incompatible) syntax from GNU sed's `-i`.
+    # Using GNU-style `sed -i "..."` here silently corrupted/skipped patches
+    # in the past (e.g. WP_HOME/WP_SITEURL left pointing at the old domain).
+    # Use python3 instead - it's available on both platforms and side-steps
+    # the whole GNU vs. BSD sed -i incompatibility.
     log ""
     log "==> 4. Patching wp-config.php on mirror ..."
+    MIRROR_URL="https://${MIRROR_DOMAIN}${WP_SUBPATH}"
     for WP_CFG_REL in "wp-config.php" "wordpress/wp-config.php"; do
         MIRROR_WP_CFG="${MIRROR_DOCROOT}/${WP_CFG_REL}"
-        remote "[ -f '${MIRROR_WP_CFG}' ] || exit 0
-            # DB_HOST → docker service name
-            sed -i \"s/'DB_HOST', 'localhost'/'DB_HOST', 'db'/g\" '${MIRROR_WP_CFG}'
-            # WP_HOME / WP_SITEURL → mirror domain
-            sed -i \
-                -e \"s|'WP_SITEURL', 'https://[^']*'|'WP_SITEURL', 'https://${MIRROR_DOMAIN}${WP_SUBPATH}'|g\" \
-                -e \"s|'WP_HOME', 'https://[^']*'|'WP_HOME', 'https://${MIRROR_DOMAIN}${WP_SUBPATH}'|g\" \
-                -e \"s|'WP_SITEURL', 'http://[^']*'|'WP_SITEURL', 'https://${MIRROR_DOMAIN}${WP_SUBPATH}'|g\" \
-                -e \"s|'WP_HOME', 'http://[^']*'|'WP_HOME', 'https://${MIRROR_DOMAIN}${WP_SUBPATH}'|g\" \
-                '${MIRROR_WP_CFG}'
-            # HTTPS-behind-proxy detection (idempotent)
-            grep -q 'HTTP_X_FORWARDED_PROTO' '${MIRROR_WP_CFG}' && exit 0
-            sed -i \"s|<?php|<?php\n// Detect HTTPS behind reverse proxy\nif (isset(\\\$_SERVER['HTTP_X_FORWARDED_PROTO']) \&\& 'https' === \\\$_SERVER['HTTP_X_FORWARDED_PROTO']) {\n    \\\$_SERVER['HTTPS'] = 'on';\n}|\" \
-                '${MIRROR_WP_CFG}'
-            echo 'Patched: ${MIRROR_WP_CFG}'" \
+        remote "[ -f '${MIRROR_WP_CFG}' ] && python3 /tmp/wp-config-patch.py '${MIRROR_WP_CFG}' '${MIRROR_URL}' || true" \
         | tee -a "$LOG" || true
     done
 
@@ -247,11 +285,24 @@ SQL"
     log "    DB URLs updated."
 
     # ── 6. Write mirror vhost config ──────────────────────────────────────────
+    # IMPORTANT: this step must be idempotent. Earlier versions of this script
+    # unconditionally overwrote the vhost file with an HTTP-only template on
+    # every run, silently destroying any hand-configured SSL/reverse-proxy
+    # blocks (this broke www16/dev16.mxtracks.info HTTPS + the ownCloud
+    # reverse-proxy more than once). Now: only CREATE the file if it doesn't
+    # exist yet; if it already exists, leave it completely untouched.
     log ""
-    log "==> 6. Writing mirror vhost config for ${MIRROR_DOMAIN} ..."
+    log "==> 6. Checking mirror vhost config for ${MIRROR_DOMAIN} ..."
     MIRROR_VHOST_DIR="$MIRROR_DATA_DIR/vhosts"
-    remote "mkdir -p '$MIRROR_VHOST_DIR'
-cat > '${MIRROR_VHOST_DIR}/${MIRROR_DOMAIN}.conf' <<'VHOST'
+    remote "mkdir -p '$MIRROR_VHOST_DIR'"
+    VHOST_PATH="${MIRROR_VHOST_DIR}/${MIRROR_DOMAIN}.conf"
+    if [ "$(remote "[ -f '${VHOST_PATH}' ] && echo yes || echo no")" = "yes" ]; then
+        log "    Vhost already exists - leaving it untouched (may contain manual SSL/proxy config): ${VHOST_PATH}"
+    else
+        log "    No existing vhost found - creating a new one (HTTP + HTTPS if certs are present) ..."
+        CERT_DIR="/etc/apache2/certs"
+        HAS_CERT="$(remote "cd '$MIRROR_APACHE_DIR' && docker compose exec -T apache sh -c \"[ -f '${CERT_DIR}/${MIRROR_DOMAIN}-fullchain.pem' ] && [ -f '${CERT_DIR}/${MIRROR_DOMAIN}-privkey.pem' ] && echo yes || echo no\" 2>/dev/null" || echo "no")"
+        remote "cat > '${VHOST_PATH}' <<'VHOST'
 <VirtualHost *:80>
     ServerName ${MIRROR_DOMAIN}
     DocumentRoot /var/www/html/${SUBDIR}
@@ -267,7 +318,34 @@ cat > '${MIRROR_VHOST_DIR}/${MIRROR_DOMAIN}.conf' <<'VHOST'
     CustomLog /var/log/apache2/${MIRROR_DOMAIN}-access.log combined
 </VirtualHost>
 VHOST
-echo 'Vhost written: ${MIRROR_VHOST_DIR}/${MIRROR_DOMAIN}.conf'" | tee -a "$LOG" || true
+echo 'Vhost written (HTTP): ${VHOST_PATH}'"
+        if [ "$HAS_CERT" = "yes" ]; then
+            remote "cat >> '${VHOST_PATH}' <<'VHOST'
+
+<VirtualHost *:443>
+    ServerName ${MIRROR_DOMAIN}
+    DocumentRoot /var/www/html/${SUBDIR}
+    DirectoryIndex index.php index.html
+
+    SSLEngine on
+    SSLCertificateFile ${CERT_DIR}/${MIRROR_DOMAIN}-fullchain.pem
+    SSLCertificateKeyFile ${CERT_DIR}/${MIRROR_DOMAIN}-privkey.pem
+
+    <Directory /var/www/html/${SUBDIR}>
+        Options Indexes SymLinksIfOwnerMatch
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    ErrorLog  /var/log/apache2/${MIRROR_DOMAIN}-ssl-error.log
+    CustomLog /var/log/apache2/${MIRROR_DOMAIN}-ssl-access.log combined
+</VirtualHost>
+VHOST
+echo 'Vhost appended (HTTPS): ${VHOST_PATH}'"
+        else
+            log "    No cert found for ${MIRROR_DOMAIN} yet - HTTPS block not added (will need manual setup, e.g. certbot)."
+        fi
+    fi
 done
 
 # ── 7. Reload mirror Apache ───────────────────────────────────────────────────
@@ -314,4 +392,6 @@ done
 log ""
 log "  Cron (nightly sync from latitude):"
 log "  0 3 * * * $(realpath "$0") >> /var/log/apache-mirror-\$(date +\\%Y\\%m\\%d).log 2>&1"
+
+remote "rm -f /tmp/wp-config-patch.py" || true
 
