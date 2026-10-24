@@ -222,6 +222,18 @@ remote "docker compose -f '$COMPOSE_FILE' --profile owncloud run --rm --no-deps 
 remote "docker compose -f '$COMPOSE_FILE' --profile owncloud up -d owncloud"
 remote "docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T owncloud \
     sh -ec 'mkdir -p /mnt/data/sessions && chown www-data:root /mnt/data/sessions && chmod 0770 /mnt/data/sessions'"
+
+# The production DB dump just restored above overwrites mirror-only settings
+# every run, so re-apply them here:
+# - files_external_dropbox bundles an outdated guzzlehttp/psr7 copy whose
+#   autoloader shadows the core one, crashing the admin "check setup" call
+#   with "Call to undefined method GuzzleHttp\Psr7\Utils::asciiToUpper()".
+#   Not used on the mirror, so disable it.
+# - filelocking.enabled must stay on for data integrity.
+echo "Re-applying mirror-only app/config overrides after DB restore."
+remote "docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T --user www-data owncloud php /var/www/owncloud/occ app:disable files_external_dropbox" || true
+remote "docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T --user www-data owncloud php /var/www/owncloud/occ config:system:set filelocking.enabled --value=true --type=boolean"
+
 remote "docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T --user www-data owncloud php /var/www/owncloud/occ maintenance:mode --off"
 remote "docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T --user www-data owncloud php /var/www/owncloud/occ status --output=json"
 remote "'$ACTIVATE_SCRIPT'"
