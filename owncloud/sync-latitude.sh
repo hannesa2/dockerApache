@@ -230,9 +230,12 @@ remote "docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T owncloud \
 #   with "Call to undefined method GuzzleHttp\Psr7\Utils::asciiToUpper()".
 #   Not used on the mirror, so disable it.
 # - filelocking.enabled must stay on for data integrity.
+# - memcache.locking should use APCu (memory-based) instead of the slow
+#   DB-based locking fallback used when it is unset.
 echo "Re-applying mirror-only app/config overrides after DB restore."
 remote "docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T --user www-data owncloud php /var/www/owncloud/occ app:disable files_external_dropbox" || true
 remote "docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T --user www-data owncloud php /var/www/owncloud/occ config:system:set filelocking.enabled --value=true --type=boolean"
+remote "docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T --user www-data owncloud php /var/www/owncloud/occ config:system:set memcache.locking --value='\\OC\\Memcache\\APCu'"
 
 remote "docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T --user www-data owncloud php /var/www/owncloud/occ maintenance:mode --off"
 remote "docker compose -f '$COMPOSE_FILE' --profile owncloud exec -T --user www-data owncloud php /var/www/owncloud/occ status --output=json"
