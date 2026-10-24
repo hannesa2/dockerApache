@@ -308,6 +308,27 @@ SQL"
         2>/dev/null" | tee -a "$LOG" || true
     log "    DB URLs updated."
 
+    # ── 5b. Rewrite hardcoded source-domain links in WP content/options ──────
+    # The file-level domain substitution (step 3b) only touches files on disk;
+    # it does NOT touch links stored inside the WordPress database itself
+    # (post content, postmeta, menu items, widget options, etc.). Without this
+    # step, pages render fine but every internal link still points at the old
+    # source domain (e.g. https://devcopy.mxtracks.info/...), which isn't
+    # reachable from the mirror. Run wp-cli search-replace for every
+    # SOURCE_DOMAINS entry so this is fixed automatically on every sync.
+    log ""
+    log "==> 5b. Rewriting source-domain links inside WordPress content/DB ..."
+    for SRC_DOMAIN in "${SRC_DOMAIN_LIST[@]}"; do
+        remote "cd '$MIRROR_APACHE_DIR' && \
+            docker compose exec --user www-data -T apache wp \
+                --path='/var/www/html/${SUBDIR}${WP_SUBPATH}' \
+                search-replace 'https://${SRC_DOMAIN}' \
+                'https://${MIRROR_DOMAIN}:${MIRROR_HTTPS_PORT}' \
+                --all-tables --skip-columns=guid --report-changed-only \
+                2>&1" | tee -a "$LOG" || true
+    done
+    log "    Content link rewrite done."
+
     # ── 6. Write mirror vhost config ──────────────────────────────────────────
     # IMPORTANT: this step must be idempotent. Earlier versions of this script
     # unconditionally overwrote the vhost file with an HTTP-only template on
