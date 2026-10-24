@@ -140,6 +140,13 @@ services:
         exec apache2 -D FOREGROUND
     expose:
       - "8080"
+    extra_hosts:
+      # Without this, ownCloud's own admin "check setup" WebDAV self-test
+      # resolves its own public hostname publicly and tries to loop back
+      # in over the internet/router - which fails since this mirror port
+      # isn't forwarded externally. Point it straight back at the host so
+      # the request reaches this same container via the published port.
+      - "${OWNCLOUD_PUBLIC_HOSTNAME:-www16.mxtracks.info}:host-gateway"
     networks:
       - owncloud_db
       - owncloud_proxy
