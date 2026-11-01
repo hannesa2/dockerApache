@@ -35,6 +35,7 @@ services:
       - "${APACHE_HTTP_PORT:-8080}:80"
       - "${APACHE_HTTPS_PORT:-8443}:443"
       - "${APACHE_HTTPS_MIRROR_PORT:-9444}:443"
+      - "${APACHE_HTTPS_MXSERVER_PORT:-9433}:443"
     volumes:
       # Web root – put your PHP/HTML files here
       - ${APACHE_DATA_DIR:-./data}/www:/var/www/html
@@ -56,6 +57,7 @@ services:
       - apache_net
       - gitlab_proxy
       - owncloud_proxy
+      - mxserver_proxy
 
   github-artifacts:
     build:
@@ -151,6 +153,68 @@ services:
       - owncloud_db
       - owncloud_proxy
 
+  mxserver-db:
+    image: postgres:14-alpine
+    profiles:
+      - mxserver
+    restart: unless-stopped
+    volumes:
+      - ${MXSERVER_MIRROR_DIR:-/Volumes/SamsungT7_2T/MXServerMirror}/postgres:/var/lib/postgresql/data
+      - ../../MXServer/script/docker/init-db.sh:/docker-entrypoint-initdb.d/10-mxserver.sh:ro
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${MXSERVER_POSTGRES_PASSWORD:-change-this-mxserver-postgres-password}
+      MXSERVER_DB_NAME: ${MXSERVER_DB_NAME:-MXServer}
+      MXSERVER_DB_USER: ${MXSERVER_DB_USER:-mxserver}
+      MXSERVER_DB_PASSWORD: ${MXSERVER_DB_PASSWORD:-change-this-mxserver-app-password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mxserver_db
+
+  mxserver-mail:
+    image: axllent/mailpit:v1.22.3
+    profiles:
+      - mxserver
+    restart: unless-stopped
+    expose:
+      - "1025"
+    networks:
+      - mxserver_proxy
+
+  mxserver:
+    build:
+      context: ../../MXServer
+      dockerfile: Dockerfile
+      args:
+        PAYARA_UID: ${MXSERVER_PAYARA_UID:-501}
+    profiles:
+      - mxserver
+    restart: unless-stopped
+    depends_on:
+      mxserver-db:
+        condition: service_healthy
+      mxserver-mail:
+        condition: service_started
+    volumes:
+      - ${MXSERVER_MIRROR_DIR:-/Volumes/SamsungT7_2T/MXServerMirror}/pictures:/data/mxinfo
+      - ${MXSERVER_MIRROR_DIR:-/Volumes/SamsungT7_2T/MXServerMirror}/config/keyfile:/opt/payara/appserver/glassfish/domains/domain1/config/keyfile:ro
+    environment:
+      MXSERVER_DB_HOST: mxserver-db
+      MXSERVER_DB_NAME: ${MXSERVER_DB_NAME:-MXServer}
+      MXSERVER_DB_USER: ${MXSERVER_DB_USER:-mxserver}
+      MXSERVER_DB_PASSWORD: ${MXSERVER_DB_PASSWORD:-change-this-mxserver-app-password}
+      JVM_ARGS: "-Xms256m -Xmx1024m -XX:MaxMetaspaceSize=256m"
+    expose:
+      - "8080"
+    networks:
+      - mxserver_db
+      - mxserver_proxy
+
 networks:
   apache_net:
     driver: bridge
@@ -162,4 +226,8 @@ networks:
     driver: bridge
   owncloud_proxy:
     name: owncloud_proxy
+    driver: bridge
+  mxserver_db:
+    driver: bridge
+  mxserver_proxy:
     driver: bridge

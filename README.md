@@ -283,6 +283,33 @@ end-of-life; this compatibility runtime is intended to preserve the current
 backup version, not as a long-term supported upgrade path. Keep it isolated
 and plan an ownCloud upgrade separately.
 
+### MXServer standby mirror
+
+The MXServer Java EE application is built from the sibling `MXServer` checkout
+and runs in a Payara 5/Java 8 container on mac2016. Its PostgreSQL 14 database
+and picture files are independent copies synchronized daily from latitude.
+Mirror-generated email is captured privately instead of being delivered.
+
+On mac2016, ensure `~/git/MXServer` and `~/git/dockerApache` are sibling
+checkouts, then prepare the runtime:
+
+```bash
+cd ~/git/dockerApache
+./mxserver/prepare-mirror.sh
+```
+
+On latitude, install the initial sync and daily 04:30 job:
+
+```bash
+cd ~/git/dockerApache
+sudo ./mxserver/install-latitude-sync.sh
+```
+
+The mirror endpoint is `https://www16.mxtracks.info:9433/backend/`. Apache
+terminates TLS using the existing www16 certificate; configure the router to
+forward public TCP 9433 to mac2016 port 9433. See `mxserver/README.md` for
+sync behavior and operations.
+
 ### Backup & Restore
 
 ```bash
