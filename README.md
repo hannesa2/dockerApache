@@ -277,6 +277,25 @@ Each job emails its success or failure, exit status, and useful log output to
 `hannes.software@gmx.at`. This installs notifications only; it does not rerun
 the large initial sync.
 
+### Hourly system availability monitor
+
+The hourly check runs as the `hannes` user on latitude, checks the host
+services and Docker applications on both latitude and mac2016, and checks
+their HTTP endpoints. It sends an initial report, then emails only when checks
+fail or recover; unchanged failures are logged without hourly email spam.
+
+Install it on latitude from the current checkout:
+
+```bash
+cd ~/git/dockerApache
+./monitoring/install-latitude-monitor.sh
+```
+
+The user crontab runs it at the start of every hour. Logs and notification
+state are stored under `~/.local/state/systems-health-monitor/`. This
+latitude-hosted monitor cannot send an alert while latitude itself is powered
+off or disconnected; it reports that condition only after the host runs again.
+
 ownCloud 10.13.4 explicitly rejects PHP 8.0 and newer. Its dedicated ownCloud
 10.13.4 container uses PHP 7.4, so it no longer runs under PHP 8.3. PHP 7.4 is
 end-of-life; this compatibility runtime is intended to preserve the current
