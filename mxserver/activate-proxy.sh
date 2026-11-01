@@ -50,6 +50,7 @@ if not inserted:
 path.write_text("\n".join(updated) + "\n")
 PY
 
+docker compose -f "$APACHE_DIR/docker-compose.yml" up -d apache
 docker compose -f "$APACHE_DIR/docker-compose.yml" exec -T apache apache2ctl -t
 docker compose -f "$APACHE_DIR/docker-compose.yml" exec -T apache apache2ctl graceful
 
