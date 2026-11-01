@@ -56,14 +56,25 @@ docker compose -f "$APACHE_DIR/docker-compose.yml" exec -T apache apache2ctl gra
 
 response_file="$(mktemp)"
 trap 'rm -f "$response_file"' EXIT
-http_status="$(curl -k --silent --show-error --max-time 30 \
-    --output "$response_file" --write-out '%{http_code}' \
-    https://www16.mxtracks.info:9433/backend/MXServer/rest/version)" || {
-    echo "ERROR: Could not reach MXServer through HTTPS port 9433." >&2
-    exit 1
-}
+http_status=""
+for attempt in $(seq 1 60); do
+    http_status="$(curl -k --silent --show-error --max-time 10 \
+        --output "$response_file" --write-out '%{http_code}' \
+        https://www16.mxtracks.info:9433/backend/MXServer/rest/version 2>/dev/null)" || http_status="000"
+    if [[ "$http_status" == "200" || "$http_status" == "401" ]]; then
+        break
+    fi
+    if [[ "$http_status" != "000" && "$http_status" != "502" && "$http_status" != "503" && "$http_status" != "504" ]]; then
+        break
+    fi
+    if [[ "$attempt" -lt 60 ]]; then
+        echo "MXServer is not ready yet (HTTP $http_status); retrying in 5 seconds ($attempt/60)."
+        sleep 5
+    fi
+done
+
 if [[ "$http_status" != "200" && "$http_status" != "401" ]]; then
-    echo "ERROR: MXServer endpoint returned HTTP $http_status." >&2
+    echo "ERROR: MXServer endpoint returned HTTP $http_status after waiting for startup." >&2
     cat "$response_file" >&2
     exit 1
 fi

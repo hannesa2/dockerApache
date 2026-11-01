@@ -51,7 +51,8 @@ the sync.
 Apache terminates TLS with the existing `www16.mxtracks.info` certificate and
 proxies `/backend/` to the app's GlassFish context root
 `/backend/MXServer/`. After the first successful sync, the script activates
-the proxy on Apache's host port 9433. The FRITZ!Box must forward public TCP
+the proxy on Apache's host port 9433 and waits up to five minutes for Payara
+to finish startup. The FRITZ!Box must forward public TCP
 9433 to mac2016 port 9433.
 
 ```text
