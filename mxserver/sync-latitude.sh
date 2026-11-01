@@ -124,14 +124,14 @@ remote "docker compose -f '$MIRROR_COMPOSE_FILE' --profile mxserver exec -T mxse
 
 echo "Streaming the MXServer PostgreSQL snapshot to mac2016..."
 runuser -u postgres -- pg_dump \
-    --format=custom \
+    --format=plain \
     --no-owner \
     --no-privileges \
     --dbname="$SOURCE_DATABASE" |
     ssh "${ssh_options[@]}" "$MIRROR_USER@$MIRROR_HOST" \
         "export PATH='/Applications/OrbStack.app/Contents/MacOS/xbin:/usr/local/bin:/usr/bin:/bin'; \
          docker compose -f '$MIRROR_COMPOSE_FILE' --profile mxserver exec -T mxserver-db \
-             pg_restore --exit-on-error --no-owner --no-privileges --role=mxserver -U postgres -d MXServer_staging"
+             psql --set ON_ERROR_STOP=1 -U mxserver -d MXServer_staging"
 
 remote "docker compose -f '$MIRROR_COMPOSE_FILE' --profile mxserver stop mxserver"
 mirror_app_stopped=1

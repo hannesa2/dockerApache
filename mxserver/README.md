@@ -25,8 +25,10 @@ must match the macOS account that owns the picture directory.
 
 ## Install sync on latitude
 
-The sync reads the live PostgreSQL 14 database `MXServer` as the local
-`postgres` account, mirrors `/srv/postgres/data/mxinfo/`, and copies the
+The sync reads the live PostgreSQL database `MXServer` as the local `postgres`
+account, streams a plain SQL dump into a staging database (so the source and
+mirror PostgreSQL client versions do not need matching archive formats),
+mirrors `/srv/postgres/data/mxinfo/`, and copies the
 GlassFish file-realm keyfile so existing application users can authenticate.
 It streams the database dump over SSH and transfers pictures incrementally.
 The PostgreSQL and SMTP credentials are newly generated for the mirror; the
