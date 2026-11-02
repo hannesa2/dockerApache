@@ -32,6 +32,78 @@ docker compose -f apache/docker-compose.yml down
 docker compose -f nextcloud/docker-compose.yml down
 ```
 
+## Private Konfiguration sichern und versionieren
+
+`.env`-Dateien und private Anwendungskonfigurationen (zum Beispiel Matomos
+`config.ini.php`) bleiben im normalen Arbeitsverzeichnis unverschlüsselt und
+von Git ignoriert. Für sie gibt es zwei getrennte Schutzschichten:
+
+- **Versionen:** SOPS verschlüsselt jede Datei mit einem öffentlichen
+  [age](https://github.com/FiloSottile/age)-Empfänger. Nur verschlüsselte
+  Dateien werden committet; der dazugehörige private age-Schlüssel bleibt
+  außerhalb des Repositorys und wird offline gesichert.
+- **Wiederherstellung:** Restic erstellt verschlüsselte, zeitpunktbezogene
+  Backups auf einem anderen Datenträger oder einem entfernten Backup-Ziel.
+  Repository-Passwort und age-Schlüssel müssen unabhängig vom Backup-Ziel
+  wiederherstellbar sein.
+
+Installiere SOPS, age und Restic über den Paketmanager des jeweiligen Systems.
+Erzeuge einmalig einen age-Schlüssel und bewahre den privaten Schlüssel samt
+einer zweiten Offline-Kopie sicher auf:
+
+```bash
+age-keygen -o ~/.config/sops/age/keys.txt
+age-keygen -y ~/.config/sops/age/keys.txt
+```
+
+Die zweite Ausgabe ist der öffentliche Empfänger, kein Geheimnis. Setze ihn in
+`AGE_RECIPIENT` und verschlüssele die Dateien nach jeder Änderung erneut:
+
+```bash
+mkdir -p private-config
+export AGE_RECIPIENT='age1...' # öffentlichen Empfänger einsetzen
+
+sops --encrypt --age "$AGE_RECIPIENT" --input-type dotenv --output-type dotenv \
+  apache/.env > private-config/apache.env.enc
+sops --encrypt --age "$AGE_RECIPIENT" --input-type dotenv --output-type dotenv \
+  nextcloud/.env > private-config/nextcloud.env.enc
+sops --encrypt --age "$AGE_RECIPIENT" --input-type ini --output-type ini \
+  /Volumes/SamsungT5_1T/apache/www/mxdocs/piwik/config/config.ini.php \
+  > private-config/matomo-config.ini.enc
+```
+
+Prüfe vor dem Commit, dass ausschließlich Ciphertext hinzugefügt wird. Im
+Notfall entschlüssle Dateien nur in die ignorierten Originalpfade:
+
+```bash
+sops --decrypt --input-type dotenv --output-type dotenv \
+  private-config/apache.env.enc > apache/.env
+sops --decrypt --input-type ini --output-type ini \
+  private-config/matomo-config.ini.enc \
+  > /Volumes/SamsungT5_1T/apache/www/mxdocs/piwik/config/config.ini.php
+```
+
+Für Restic müssen `RESTIC_REPOSITORY` auf ein **anderes** Medium oder einen
+entfernten Host und `RESTIC_PASSWORD_FILE` auf eine außerhalb des Repositorys
+und Backup-Ziels aufbewahrte Passwortdatei zeigen. Initialisiere das Ziel nur
+einmal mit `restic init`; danach können die kritischen Konfigurationen
+regelmäßig gesichert werden:
+
+```bash
+restic backup apache/.env nextcloud/.env \
+  /Volumes/SamsungT5_1T/apache/www/mxdocs/piwik/config/config.ini.php \
+  --tag dockerApache-private-config
+restic snapshots
+```
+
+Ergänze die Backup-Auswahl um weitere tatsächlich benötigte private Dateien,
+etwa zusätzliche Stack-`.env`-Dateien und selbst verwaltete TLS-Schlüssel.
+Führe regelmäßig einen Restore-Test in ein separates Testverzeichnis durch.
+Ein Backup auf demselben Samsung-Laufwerk schützt nicht vor dessen Ausfall.
+Ein privates Git-Repository ist optional; wenn verwendet, dort ebenfalls nur
+SOPS-verschlüsselte Dateien ablegen. Bereits versehentlich committete Klartexte
+gelten als offengelegt: Zugangsdaten rotieren und die Git-Historie bereinigen.
+
 ## Apache (with MySQL)
 
 A self-contained Apache + PHP stack using **MySQL 8.4** as the database.  
