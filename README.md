@@ -139,8 +139,10 @@ Encrypt certificate has been deployed to mac2016.
 The source-side job creates a consistent GitLab backup once per day and streams
 it to mac2016 over SSH. The dedicated SSH key can run only
 `~/bin/gitlab-mac-backup-receiver.sh`; the receiver validates the archive,
-preserves the three most recent backup generations and refuses a transfer if
-less than 200 GiB would remain free. It stores `gitlab.rb` and
+keeps the newest backup from each of the two newest months, and refuses a
+transfer if less than 200 GiB would remain free. Daily transfers therefore
+update the current month's retained snapshot rather than accumulating daily
+copies. It stores `gitlab.rb` and
 `gitlab-secrets.json` with each backup. The private key and secret file are
 never stored in this repository.
 

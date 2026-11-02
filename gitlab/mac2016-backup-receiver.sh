@@ -75,20 +75,32 @@ fi
 trap - EXIT
 /bin/ln -s "$backup_id/$backup_file" "$backup_root/$backup_file"
 
-count=0
+retained_months=0
+last_month=""
+backups_this_month=0
+# Backup identifiers sort newest-first; retain one generation for each of the
+# two newest months, pruning extra runs from those months and all older months.
 while IFS= read -r old_backup; do
-    case "${old_backup##*/}" in
-        git16dr_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z_19.4.1)
-            count=$((count + 1))
-            if [ "$count" -gt 3 ]; then
-                /bin/rm -rf -- "$old_backup"
-                backup_file="${old_backup##*/}_gitlab_backup.tar"
-                if [ -L "$backup_root/$backup_file" ]; then
-                    /bin/rm -- "$backup_root/$backup_file"
-                fi
-            fi
-            ;;
-    esac
+    backup_name="${old_backup##*/}"
+    if [[ ! "$backup_name" =~ ^git16dr_([0-9]{6})[0-9]{2}T[0-9]{6}Z_19\.4\.1$ ]]; then
+        continue
+    fi
+
+    month="${BASH_REMATCH[1]}"
+    if [ "$month" != "$last_month" ]; then
+        retained_months=$((retained_months + 1))
+        last_month="$month"
+        backups_this_month=0
+    fi
+    backups_this_month=$((backups_this_month + 1))
+
+    if [ "$retained_months" -gt 2 ] || [ "$backups_this_month" -gt 1 ]; then
+        /bin/rm -rf -- "$old_backup"
+        backup_file="${backup_name}_gitlab_backup.tar"
+        if [ -L "$backup_root/$backup_file" ]; then
+            /bin/rm -- "$backup_root/$backup_file"
+        fi
+    fi
 done < <(/usr/bin/find "$backup_root" -mindepth 1 -maxdepth 1 -type d -name 'git16dr_*' -print | /usr/bin/sort -r)
 
 echo "Stored GitLab backup $backup_id"
