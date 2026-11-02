@@ -64,7 +64,8 @@ for attempt in $(seq 1 60); do
     if [[ "$http_status" == "200" || "$http_status" == "401" ]]; then
         break
     fi
-    if [[ "$http_status" != "000" && "$http_status" != "502" && "$http_status" != "503" && "$http_status" != "504" ]]; then
+    # Payara can answer 404 while the server is up but the WAR is still deploying.
+    if [[ "$http_status" != "000" && "$http_status" != "404" && "$http_status" != "502" && "$http_status" != "503" && "$http_status" != "504" ]]; then
         break
     fi
     if [[ "$attempt" -lt 60 ]]; then

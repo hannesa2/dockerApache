@@ -23,6 +23,29 @@ script preserves any existing passwords and generates private ones for new
 settings in `apache/.env`. Do not commit that file. `MXSERVER_PAYARA_UID`
 must match the macOS account that owns the picture directory.
 
+## Payara 6 migration assessment
+
+The current application is not a drop-in deployment for Payara 6. The sibling
+`MXServer` project is a Java EE 7 WAR (`javax.*`) compiled with Java 7 source
+and target settings. Its POM pins Java EE 7 APIs, EclipseLink 2.5.1, and
+Jersey 2.0; its deployment descriptors also contain GlassFish-specific
+security-role mappings and a `file` authentication realm.
+
+Payara 6 is a Jakarta EE runtime, so the `javax.*` application and descriptors
+must be migrated or transformed before a meaningful Payara 6 test. The
+existing MXServer source and `MXServer/Dockerfile` do not need to be changed
+for this investigation: the migration test should build a separate staging
+image from the same source, leaving the Payara 5 mirror service untouched.
+That staging service must use its own database and mail sink, not the live or
+active mirror database. Authentication tests must account for the staged
+file-realm users/keyfile.
+
+The first compatibility gate is therefore a separate Payara 6 staging build
+and deployment of a Jakarta-transformed WAR. Only after it deploys should API,
+database reads/writes, file handling, and file-realm authentication be tested.
+The existing Apache `/backend/` routing and active Payara 5 service remain
+unchanged during this work.
+
 ## Install sync on latitude
 
 The sync reads the live PostgreSQL database `MXServer` as the local `postgres`
@@ -52,7 +75,9 @@ Apache terminates TLS with the existing `www16.mxtracks.info` certificate and
 proxies `/backend/` to the app's GlassFish context root
 `/backend/MXServer/`. After the first successful sync, the script activates
 the proxy on Apache's host port 9433 and waits up to five minutes for Payara
-to finish startup. The FRITZ!Box must forward public TCP
+to finish startup. During startup it retries connection failures and HTTP
+404/502/503/504 responses; Payara may return 404 before the WAR deployment
+completes. The FRITZ!Box must forward public TCP
 9433 to mac2016 port 9433.
 
 ```text
