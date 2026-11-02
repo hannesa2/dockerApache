@@ -50,6 +50,7 @@ services:
       - ${NEXTCLOUD_DATA_DIR:-./data}/nextcloud/data:/var/www/html/data
       - ${NEXTCLOUD_DATA_DIR:-./data}/nextcloud/config:/var/www/html/config
       - ${NEXTCLOUD_DATA_DIR:-./data}/nextcloud/custom_apps:/var/www/html/custom_apps
+      - ./apache-servername.conf:/etc/apache2/conf-enabled/servername.conf:ro
     environment:
       # Database
       POSTGRES_HOST: db
