@@ -34,54 +34,77 @@ docker compose -f nextcloud/docker-compose.yml down
 
 ## Private Konfiguration sichern und versionieren
 
-`.env`-Dateien und private Anwendungskonfigurationen (zum Beispiel Matomos
-`config.ini.php`) bleiben im normalen Arbeitsverzeichnis unverschlüsselt und
-von Git ignoriert. Für sie gibt es zwei getrennte Schutzschichten:
+`.env`-Dateien und private Anwendungskonfigurationen bleiben an ihren
+Originalpfaden unverschlüsselt. Nur die verschlüsselten Kopien gehören in Git.
+Prüfe insbesondere bei Dateien außerhalb dieses Repositorys, dass Klartext
+nicht anderweitig versioniert wird.
 
-- **Versionen:** SOPS verschlüsselt jede Datei mit einem öffentlichen
-  [age](https://github.com/FiloSottile/age)-Empfänger. Nur verschlüsselte
-  Dateien werden committet; der dazugehörige private age-Schlüssel bleibt
-  außerhalb des Repositorys und wird offline gesichert.
-- **Wiederherstellung:** Restic erstellt verschlüsselte, zeitpunktbezogene
-  Backups auf einem anderen Datenträger oder einem entfernten Backup-Ziel.
-  Repository-Passwort und age-Schlüssel müssen unabhängig vom Backup-Ziel
-  wiederherstellbar sein.
-
-Installiere SOPS, age und Restic über den Paketmanager des jeweiligen Systems.
-Erzeuge einmalig einen age-Schlüssel und bewahre den privaten Schlüssel samt
-einer zweiten Offline-Kopie sicher auf:
+Installiere GnuPG (`gpg`) und initialisiere das gemeinsame Skript:
 
 ```bash
-age-keygen -o ~/.config/sops/age/keys.txt
-age-keygen -y ~/.config/sops/age/keys.txt
+git submodule update --init buildSrc
 ```
 
-Die zweite Ausgabe ist der öffentliche Empfänger, kein Geheimnis. Setze ihn in
-`AGE_RECIPIENT` und verschlüssele die Dateien nach jeder Änderung erneut:
+Verschlüssele die Dateien nach einer Änderung erneut. Das Skript fragt die
+Passphrase zweimal verdeckt ab und verwendet symmetrisches AES-256 mit
+GnuPG-Integritätsschutz. Eine lange, einzigartige Passphrase muss unabhängig
+vom Backup aufbewahrt werden; ohne sie ist keine Wiederherstellung möglich.
 
 ```bash
-mkdir -p private-config
-export AGE_RECIPIENT='age1...' # öffentlichen Empfänger einsetzen
-
-sops --encrypt --age "$AGE_RECIPIENT" --input-type dotenv --output-type dotenv \
-  apache/.env > private-config/apache.env.enc
-sops --encrypt --age "$AGE_RECIPIENT" --input-type dotenv --output-type dotenv \
-  nextcloud/.env > private-config/nextcloud.env.enc
-sops --encrypt --age "$AGE_RECIPIENT" --input-type ini --output-type ini \
-  /Users/hannes/server/apache/www/mxdocs/piwik/config/config.ini.php \
-  > private-config/matomo-config.ini.enc
+./private/private.sh --crypt
+./private/private.sh --decrypt
 ```
 
-Prüfe vor dem Commit, dass ausschließlich Ciphertext hinzugefügt wird. Im
-Notfall entschlüssle Dateien nur in die ignorierten Originalpfade:
+Ohne weitere Argumente verarbeitet der Aufruf `apache/.env`, `nextcloud/.env`
+und Matomos `config.ini.php`. Einzelne Ziele können gewählt werden:
 
 ```bash
-sops --decrypt --input-type dotenv --output-type dotenv \
-  private-config/apache.env.enc > apache/.env
-sops --decrypt --input-type ini --output-type ini \
-  private-config/matomo-config.ini.enc \
-  > /Users/hannes/server/apache/www/mxdocs/piwik/config/config.ini.php
+./private/private.sh --crypt apache nextcloud
+MATOMO_CONFIG_PATH=/pfad/zur/config.ini.php ./private/private.sh --decrypt matomo
 ```
+
+Der Standardpfad für Matomo ist
+`/Users/hannes/server/apache/www/mxdocs/piwik/config/config.ini.php`.
+Verschlüsselte Kopien liegen in `private-config/gpg/`; beim Entschlüsseln
+erhalten sie den kurzen Hostnamen vor `.enc`, z. B.
+`apache.env.mac2016.enc`, `nextcloud.env.latitude.enc` und
+`matomo-config.ini.beelink.enc`. `--decrypt` verwendet nur Dateien für den
+aktuellen kurzen Hostnamen (`hostname -s`). Unterschiedliche Rechner müssen
+eindeutige Hostnamen haben. Nach einer Umbenennung des Rechners muss die
+zugehörige Sicherungsdatei entsprechend umbenannt werden.
+
+Bereits vorhandene Dateien ohne Hostname bleiben unverändert und werden nicht
+automatisch verwendet. Sie können nach Prüfung ihrer Herkunft auf den passenden
+Hostnamen umbenannt werden, zum Beispiel:
+
+```bash
+mv -i private-config/gpg/apache.env.enc private-config/gpg/apache.env.mac2016.enc
+```
+
+Beim Entschlüsseln müssen die jeweiligen Zielverzeichnisse existieren. Fehlende Eingaben führen
+vor der Verarbeitung zu einem Fehler. Beim Entschlüsseln wird eine bestehende
+Klartextdatei vor dem Ersetzen als `<Dateiname>.YYMMDD-hhmm` gesichert, zum
+Beispiel `apache/.env.261115-1120`. Sind bestehende und entschlüsselte Datei
+inhaltlich identisch, bleibt die bestehende Datei unverändert und es wird keine
+Sicherung erstellt. Sicherung und wiederhergestellte Datei erhalten bei einer
+Änderung Modus `0600`. Existiert bereits eine Sicherung für diese Minute,
+bricht der Vorgang ohne Überschreiben ab. Die Sicherung enthält Klartext und
+ist wie die Originaldatei zu schützen. Dieses Verhalten gilt auch beim direkten
+Aufruf von `buildSrc/scripts/decrypt.sh`: Für beliebige Dateien und insbesondere
+Matomo außerhalb dieses Repositorys müssen Klartext-Sicherungen gegebenenfalls
+in den dortigen Git-Ignore-Regeln ausgeschlossen werden. Beim Verschlüsseln werden bestehende
+verschlüsselte Dateien nur nach Bestätigung überschrieben.
+Die Verarbeitung erfolgt nacheinander: Scheitert ein späteres Ziel, bleiben
+bereits verarbeitete Dateien bestehen.
+
+Ohne interaktives Terminal kann `CRYPT_PASS` gesetzt werden; beim Verschlüsseln
+muss `CRYPT_PASS_CONFIRM` denselben Wert enthalten. Bestehende verschlüsselte
+Ziele werden ohne Terminal nicht überschrieben. Umgebungsvariablen können lokal einsehbar
+sein; Passphrasen niemals in Skripte oder Git schreiben.
+
+Frühere OpenSSL-CBC-Dateien des buildSrc-Skripts sind nicht kompatibel und
+müssen separat mit der alten Skriptversion entschlüsselt werden. Vor jedem
+Commit prüfen, dass nur Ciphertext hinzugefügt wird.
 
 Für Restic müssen `RESTIC_REPOSITORY` auf ein **anderes** Medium oder einen
 entfernten Host und `RESTIC_PASSWORD_FILE` auf eine außerhalb des Repositorys
@@ -101,7 +124,7 @@ etwa zusätzliche Stack-`.env`-Dateien und selbst verwaltete TLS-Schlüssel.
 Führe regelmäßig einen Restore-Test in ein separates Testverzeichnis durch.
 Ein Backup auf demselben Samsung-Laufwerk schützt nicht vor dessen Ausfall.
 Ein privates Git-Repository ist optional; wenn verwendet, dort ebenfalls nur
-SOPS-verschlüsselte Dateien ablegen. Bereits versehentlich committete Klartexte
+verschlüsselte Dateien ablegen. Bereits versehentlich committete Klartexte
 gelten als offengelegt: Zugangsdaten rotieren und die Git-Historie bereinigen.
 
 ## Apache (with MySQL)

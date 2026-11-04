@@ -3,6 +3,10 @@ data
 .env
 docker-compose.override.yml
 __pycache__
+.decrypt-tmp.*
+.private-restore.*
+.env.[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]
+config.ini.php.[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]
 
 # Migration / sync script outputs – generated at runtime, not source files
 #apache/native-proxy-*.conf
