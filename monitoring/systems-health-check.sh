@@ -102,7 +102,6 @@ latitude_containers=(
     gitlab
     gitlab-runner
     homeassistant
-    artifactory
     nextcloud-coredns-dot-1
     nextcloud-dnsmasq-1
 )
@@ -114,7 +113,6 @@ check_http "Latitude native Apache" "http://127.0.0.1/"
 check_http "Latitude GlassFish" "http://127.0.0.1:8081/"
 check_http "Latitude Apache container" "http://127.0.0.1:8085/"
 check_http "Latitude GitLab" "http://127.0.0.1:8083/users/sign_in"
-check_http "Latitude Artifactory" "http://127.0.0.1:8091/"
 check_http "Latitude Home Assistant" "http://127.0.0.1:8123/"
 
 if dns_answer="$(dig +short +time=2 +tries=1 @192.168.178.129 nextcloud.mxtracks.info A 2>/dev/null)" &&
