@@ -306,6 +306,23 @@ scheduled database import. The database password and copied `config.ini.php`
 are private runtime data under `/Volumes/SamsungT5_1T/apache/`, never commit
 them.
 
+On latitude, native Apache serves the primary Matomo installation from
+`/srv/www/vhosts/mxdocs/piwik`. PHP 8.4-FPM is enabled only for PHP URLs below
+`/piwik/` using Apache's late per-request `<If>` section, so it overrides the
+global legacy mod_php handler without changing other sites. Install the scoped
+handler and reload Apache:
+
+```bash
+sudo install -o root -g root -m 0644 apache/latitude-matomo-php84.conf \
+  /etc/apache2/conf-available/latitude-matomo-php84.conf
+sudo a2enconf latitude-matomo-php84
+sudo apache2ctl configtest && sudo systemctl reload apache2
+```
+
+PHP 8.4-FPM and its required extensions must be installed and active. If the
+config test fails, disable the new snippet with
+`sudo a2disconf latitude-matomo-php84` before making other Apache changes.
+
 ### ownCloud daily standby mirror
 
 The ownCloud 10.13.4 copy is stored on Samsung T7 under
