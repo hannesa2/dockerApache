@@ -40,16 +40,16 @@ von Git ignoriert. Für sie gibt es zwei getrennte Schutzschichten:
 
 - **Versionen:** SOPS verschlüsselt jede Datei mit einem öffentlichen
   [age](https://github.com/FiloSottile/age)-Empfänger. Nur verschlüsselte
-  Dateien werden committet; der dazugehörige private age-Schlüssel bleibt
-  außerhalb des Repositorys und wird offline gesichert.
+  Dateien werden committet. Ein passwortgeschützter age-Schlüssel kann
+  ebenfalls als Ciphertext versioniert werden; der Klartext-Schlüssel gehört
+  niemals ins Repository.
 - **Wiederherstellung:** Restic erstellt verschlüsselte, zeitpunktbezogene
   Backups auf einem anderen Datenträger oder einem entfernten Backup-Ziel.
-  Repository-Passwort und age-Schlüssel müssen unabhängig vom Backup-Ziel
+  Repository-Passwort und Passphrase müssen unabhängig vom Backup-Ziel
   wiederherstellbar sein.
 
-Installiere SOPS, age und Restic über den Paketmanager des jeweiligen Systems.
-Erzeuge einmalig einen age-Schlüssel und bewahre den privaten Schlüssel samt
-einer zweiten Offline-Kopie sicher auf:
+Installiere SOPS, age, OpenSSL und Restic über den Paketmanager des jeweiligen
+Systems. Erzeuge einmalig einen age-Schlüssel:
 
 ```bash
 age-keygen -o ~/.config/sops/age/keys.txt
@@ -72,8 +72,8 @@ sops --encrypt --age "$AGE_RECIPIENT" --input-type ini --output-type ini \
   > private-config/matomo-config.ini.enc
 ```
 
-Prüfe vor dem Commit, dass ausschließlich Ciphertext hinzugefügt wird. Im
-Notfall entschlüssle Dateien nur in die ignorierten Originalpfade:
+Schütze anschließend den privaten age-Schlüssel einmalig mit einer langen,
+merkbaren Passphrase:
 
 ```bash
 sops --decrypt --input-type dotenv --output-type dotenv \
@@ -82,6 +82,25 @@ sops --decrypt --input-type ini --output-type ini \
   private-config/matomo-config.ini.enc \
   > /Users/hannes/server/apache/www/mxdocs/piwik/config/config.ini.php
 ```
+
+Das Skript speichert den Age-Schlüssel nur als passwortgeschützte Datei
+`private-config/age-identity.txt.enc` (AES-256-CBC mit PBKDF2) und fragt die
+Passphrase beim Entschlüsseln verdeckt ab. Verwende eine einzigartige,
+mehrwortige Passphrase; wer sie vergisst, kann die Dateien nicht mehr
+wiederherstellen. Der private Age-Schlüssel wird nur vorübergehend in eine
+Datei mit Zugriffsrechten `0600` entschlüsselt und danach entfernt.
+
+Entschlüssele mit dem Wrapper in die ignorierten Originalpfade:
+
+```bash
+./private-config/decrypt.sh apache
+./private-config/decrypt.sh nextcloud
+./private-config/decrypt.sh matomo
+```
+
+Der Matomo-Zielpfad kann bei Bedarf mit `MATOMO_CONFIG_PATH=/pfad/zur/config.ini.php`
+überschrieben werden. Prüfe vor dem Commit, dass ausschließlich Ciphertext
+hinzugefügt wird.
 
 Für Restic müssen `RESTIC_REPOSITORY` auf ein **anderes** Medium oder einen
 entfernten Host und `RESTIC_PASSWORD_FILE` auf eine außerhalb des Repositorys
