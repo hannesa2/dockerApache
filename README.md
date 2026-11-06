@@ -355,8 +355,10 @@ the large initial sync.
 
 The hourly check runs as the `hannes` user on latitude, checks the host
 services and Docker applications on both latitude and mac2016, and checks
-their HTTP endpoints. It sends an initial report, then emails only when checks
-fail or recover; unchanged failures are logged without hourly email spam.
+their HTTP endpoints. A second monitor runs from mac2016 so Latitude failures
+are reported even if Latitude never starts. Both send an initial report, then
+email only when checks fail or recover; unchanged failures are logged without
+hourly email spam.
 
 Install it on latitude from the current checkout:
 
@@ -369,6 +371,20 @@ The user crontab runs it at the start of every hour. Logs and notification
 state are stored under `~/.local/state/systems-health-monitor/`. This
 latitude-hosted monitor cannot send an alert while latitude itself is powered
 off or disconnected; it reports that condition only after the host runs again.
+
+Install the second monitor on mac2016 from its repository checkout:
+
+```bash
+cd ~/git/dockerApache
+./monitoring/install-mac2016-monitor.sh
+```
+
+It runs at minute 10 of every hour from the `hannes` user crontab, independently
+of an interactive login. It checks mac2016 locally and Latitude over SSH; when
+Latitude is offline, mac2016 emails that failure. mac2016 itself must be
+powered on, connected to the network, and able to send email for this alert to
+work. Its log and separate notification state are stored under
+`~/.local/state/systems-health-monitor/`.
 
 ownCloud 10.13.4 explicitly rejects PHP 8.0 and newer. Its dedicated ownCloud
 10.13.4 container uses PHP 7.4, so it no longer runs under PHP 8.3. PHP 7.4 is
