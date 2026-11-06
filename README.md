@@ -323,50 +323,23 @@ PHP 8.4-FPM and its required extensions must be installed and active. If the
 config test fails, disable the new snippet with
 `sudo a2disconf latitude-matomo-php84` before making other Apache changes.
 
-### ownCloud daily standby mirror
+### ownCloud on mac2016
 
-The ownCloud 10.13.4 copy is stored on Samsung T7 under
-`/Volumes/SamsungT7_2T/ownCloudBackup/owncloud`. It runs in its own Apache/PHP
-7.4 container and PostgreSQL 14 database; the main Apache vhost proxies
-`https://www16.mxtracks.info:8443/owncloud/` to it. This isolates the legacy
-ownCloud runtime from the main PHP 8.3 container that serves Matomo and the
-other sites.
+mac2016 is the current ownCloud source while latitude is offline. The local
+instance was upgraded from 10.16.6 to 10.16.7 using its existing code, files,
+and PostgreSQL database; no latitude sync was needed or performed. It runs in
+the dedicated `owncloud/server:10.16.7` PHP runtime, isolated from the main PHP
+8.3 Apache container.
 
-On mac2016, prepare the mirror storage and build the compatible runtime:
+The application remains in maintenance mode, and Apache denies `/owncloud`
+until service is intentionally enabled. Do not run
+`owncloud/sync-latitude.sh` or install its scheduled job while latitude is
+offline: it would copy stale latitude data over mac2016.
 
-```bash
-if [ ! -f apache/.env ]; then cp apache/.env.example apache/.env; fi
-./owncloud/prepare-mirror.sh
-```
-
-The preparation script generates private PostgreSQL passwords in the ignored
-`apache/.env`, preserves the existing T7 data/config, and builds the compatible
-container. The first successful sync activates the Apache proxy. Then, on
-latitude, install and run the root-owned initial sync job:
-
-```bash
-sudo ./owncloud/install-latitude-sync.sh
-```
-
-It places a daily 03:45 cron job on latitude. Rsync transfers bulk file changes
-while the source remains available, then latitude briefly enters maintenance
-mode for a final delta and consistent database snapshot. Rsync transfers only
-changed files after the initial baseline; the database is restored into the
-private mirror PostgreSQL service. The
-mirror is a standby: changes made to it are replaced by latitude's state at the
-next sync. Do not use it as an independent writable service.
-
-After the sync script has been transferred to latitude, configure completion
-notifications for its ownCloud sync, GitLab backup transfer, and PostgreSQL
-backup with:
-
-```bash
-sudo ./owncloud/install-sync-notifications.sh
-```
-
-Each job emails its success or failure, exit status, and useful log output to
-`hannes.software@gmx.at`. This installs notifications only; it does not rerun
-the large initial sync.
+To open access on mac2016, run `./owncloud/activate-proxy.sh`, then disable
+ownCloud maintenance mode. For the close-access procedure, see
+[`owncloud/README.md`](owncloud/README.md#enable-owncloud-access). Proxy
+activation does not require a sync marker.
 
 ### Hourly system availability monitor
 
@@ -403,11 +376,10 @@ powered on, connected to the network, and able to send email for this alert to
 work. Its log and separate notification state are stored under
 `~/.local/state/systems-health-monitor/`.
 
-ownCloud 10.13.4 explicitly rejects PHP 8.0 and newer. Its dedicated ownCloud
-10.13.4 container uses PHP 7.4, so it no longer runs under PHP 8.3. PHP 7.4 is
-end-of-life; this compatibility runtime is intended to preserve the current
-backup version, not as a long-term supported upgrade path. Keep it isolated
-and plan an ownCloud upgrade separately.
+ownCloud's dedicated image provides its own PHP runtime because this legacy
+application line is incompatible with the main PHP 8.3 Apache runtime. Keeping
+the application version matched between latitude and mac2016 is essential for
+reliable standby synchronization.
 
 ### MXServer standby mirror
 

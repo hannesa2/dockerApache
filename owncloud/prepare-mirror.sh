@@ -34,20 +34,22 @@ DATA_DIR="$OWNCLOUD_MIRROR_DIR/data"
 SOURCE_CONFIG_DIR="$OWNCLOUD_MIRROR_DIR/source-config"
 RUNTIME_CONFIG_DIR="$OWNCLOUD_MIRROR_DIR/runtime-config"
 
-if [[ ! -f "$CODE_DIR/version.php" ]] || ! grep -q "\$OC_VersionString = '10.16.6';" "$CODE_DIR/version.php"; then
-    echo "ERROR: Expected the existing ownCloud 10.16.6 code at $CODE_DIR." >&2
+if [[ ! -f "$CODE_DIR/version.php" ]] || ! grep -qE "^[\$]OC_VersionString = '10\.16\.(6|7)';$" "$CODE_DIR/version.php"; then
+    echo "ERROR: Expected the existing ownCloud 10.16.6 or synchronized 10.16.7 code at $CODE_DIR." >&2
     exit 1
 fi
-if [[ ! -f "$DATA_DIR/.ocdata" || ! -f "$CODE_DIR/config/config.php" ]]; then
+if [[ ! -f "$DATA_DIR/.ocdata" ||
+    ( ! -f "$SOURCE_CONFIG_DIR/config.php" && ! -f "$CODE_DIR/config/config.php" ) ]]; then
     echo "ERROR: Existing ownCloud data or config is missing; refusing to initialize." >&2
     exit 1
 fi
 
-mkdir -p "$SOURCE_CONFIG_DIR" "$RUNTIME_CONFIG_DIR" "$OWNCLOUD_MIRROR_DIR/postgres"
+mkdir -p "$SOURCE_CONFIG_DIR" "$RUNTIME_CONFIG_DIR" "$OWNCLOUD_MIRROR_DIR/postgres" "$OWNCLOUD_MIRROR_DIR/apps"
 touch "$OWNCLOUD_MIRROR_DIR/.owncloud-mirror-managed" \
     "$CODE_DIR/.owncloud-mirror-managed" \
     "$DATA_DIR/.owncloud-mirror-managed" \
-    "$SOURCE_CONFIG_DIR/.owncloud-mirror-managed"
+    "$SOURCE_CONFIG_DIR/.owncloud-mirror-managed" \
+    "$OWNCLOUD_MIRROR_DIR/apps/.owncloud-mirror-managed"
 if [[ ! -f "$SOURCE_CONFIG_DIR/config.php" ]]; then
     install -m 0600 "$CODE_DIR/config/config.php" "$SOURCE_CONFIG_DIR/config.php"
 fi
@@ -87,11 +89,11 @@ if ! grep -q '^OWNCLOUD_UID=' "$ENV_FILE"; then
 fi
 chmod 0600 "$ENV_FILE"
 
-docker compose -f "$APACHE_DIR/docker-compose.yml" --profile owncloud config --quiet
-docker compose -f "$APACHE_DIR/docker-compose.yml" --profile owncloud build owncloud
-docker compose -f "$APACHE_DIR/docker-compose.yml" up -d apache
-docker compose -f "$APACHE_DIR/docker-compose.yml" exec -T apache apache2ctl -t
-docker compose -f "$APACHE_DIR/docker-compose.yml" exec -T apache apache2ctl graceful
+docker compose --env-file "$ENV_FILE" -f "$APACHE_DIR/docker-compose.yml" --profile owncloud config --quiet
+docker compose --env-file "$ENV_FILE" -f "$APACHE_DIR/docker-compose.yml" --profile owncloud build owncloud
+docker compose --env-file "$ENV_FILE" -f "$APACHE_DIR/docker-compose.yml" up -d apache
+docker compose --env-file "$ENV_FILE" -f "$APACHE_DIR/docker-compose.yml" exec -T apache apache2ctl -t
+docker compose --env-file "$ENV_FILE" -f "$APACHE_DIR/docker-compose.yml" exec -T apache apache2ctl graceful
 
-echo "Prepared ownCloud 10.16.6 mirror storage and PHP 7.4 image."
-echo "Run sudo ./owncloud/install-latitude-sync.sh on latitude for the initial sync and daily schedule."
+echo "Prepared ownCloud 10.16.7 mirror storage and PHP runtime image."
+echo "No Latitude sync is required when mac2016 is the ownCloud source."

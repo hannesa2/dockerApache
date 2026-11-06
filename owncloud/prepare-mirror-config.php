@@ -76,14 +76,22 @@ $CONFIG['dbhost'] = 'owncloud-db';
 $CONFIG['dbname'] = $databaseName;
 $CONFIG['dbuser'] = $databaseUser;
 $CONFIG['dbpassword'] = $databasePassword;
-$CONFIG['datadirectory'] = '/daten/owncloud/data';
-$CONFIG['trusted_domains'] = ['www16.mxtracks.info'];
+$CONFIG['datadirectory'] = '/mnt/data/files';
+$CONFIG['trusted_domains'] = [
+    'www16.mxtracks.info',
+    'www16.mxtracks.info:8443',
+    'www.mxtracks.info',
+];
 $CONFIG['overwrite.cli.url'] = 'https://' . $publicHost . '/owncloud';
 $CONFIG['overwritehost'] = $publicHost;
 $CONFIG['overwriteprotocol'] = 'https';
 $CONFIG['overwritewebroot'] = '/owncloud';
 $CONFIG['htaccess.RewriteBase'] = '/owncloud';
-$CONFIG['maintenance'] = false;
+$CONFIG['memcache.local'] = '\\OC\\Memcache\\APCu';
+$CONFIG['memcache.locking'] = '\\OC\\Memcache\\APCu';
+$CONFIG['filelocking.enabled'] = true;
+unset($CONFIG['redis']);
+$CONFIG['maintenance'] = true;
 
 $tmpConfig = $runtimeConfigDir . '/config.php.tmp';
 $contents = "<?php\n\$CONFIG = " . var_export($CONFIG, true) . ";\n";

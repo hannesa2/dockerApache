@@ -23,17 +23,25 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text()
 include = "    Include /etc/apache2/sites-enabled/www16-owncloud.inc"
-if include not in text:
-    count = text.count("    Include /etc/apache2/sites-enabled/www16-github.inc")
-    if count != 2:
-        raise SystemExit(
-            f"Expected both www16 GitHub include directives in {path}; left it unchanged."
-        )
-    text = text.replace(
-        "    Include /etc/apache2/sites-enabled/www16-github.inc",
-        include + "\n    Include /etc/apache2/sites-enabled/www16-github.inc",
+deny = (
+    '    <LocationMatch "^/owncloud(?:/|$)">\n'
+    "        Require all denied\n"
+    "    </LocationMatch>"
+)
+deny_count = text.count(deny)
+if deny_count == 2:
+    text = text.replace(deny, include)
+elif deny_count != 0:
+    raise SystemExit(
+        f"Expected either two standby deny blocks or no deny blocks in {path}; left it unchanged."
     )
-    path.write_text(text)
+
+include_count = text.count(include)
+if include_count != 2:
+    raise SystemExit(
+        f"Expected both www16 ownCloud proxy includes in {path}; left it unchanged."
+    )
+path.write_text(text)
 PY
 
 docker compose -f "$APACHE_DIR/docker-compose.yml" exec -T apache apache2ctl -t
@@ -60,7 +68,7 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as response:
     status = json.load(response)
 version = status.get("version", "")
-if not status.get("installed") or not version.startswith("10.16.6"):
-    raise SystemExit("ownCloud endpoint did not report an installed 10.16.6 version.")
+if not status.get("installed") or not version.startswith("10.16.7"):
+    raise SystemExit("ownCloud endpoint did not report an installed 10.16.7 version.")
 print(f"ownCloud {version} is healthy over HTTPS.")
 PY

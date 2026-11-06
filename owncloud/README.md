@@ -1,90 +1,36 @@
-# ownCloud standby mirror
+# ownCloud on mac2016
 
-The production ownCloud at latitude is version 10.16.6, which requires PHP
-7.2–7.4. Its mirror therefore uses the isolated official
-`owncloud/server:10.16.6` image, whose runtime is PHP 7.4 (currently 7.4.33);
-it is not executed by the main PHP 8.3 Apache container. Only the image's
-Apache/PHP runtime is used — the actual ownCloud application code and config
-are bind-mounted in from the mirrored data (see below), so the image's own
-embedded ownCloud version is irrelevant to the mounted application version and
-can be moved forward within the 10.x line independently of it.
+mac2016 is the current ownCloud source; Latitude is offline. No Latitude sync
+is needed or should be run for this setup. ownCloud on mac2016 was upgraded
+locally from 10.16.6 to 10.16.7 in its isolated
+`owncloud/server:10.16.7` PHP runtime and PostgreSQL 16 database. The database
+schema upgrade completed successfully. User files and database contents are
+the existing mac2016 copy; they were not replaced from Latitude.
 
-The image tag currently matches the mounted application version, but that is
-coincidental, not required: the image only supplies the OS/PHP runtime, never
-its own bundled application code (see above). `10.16.6` is ownCloud's actively
-maintained current 10.x release, rebuilt on Ubuntu 22.04 with an up-to-date,
-patched PHP 7.4 — e.g. it already carries the October 2026 "php2shell" fixes
-(CVE-2026-109618 / CVE-2026-109619). Re-pull/rebuild this image periodically
-(`docker compose build owncloud`) to keep picking up PHP security fixes,
-independently of any ownCloud application upgrade.
+The application currently remains in maintenance mode, and Apache denies
+`/owncloud` on both HTTP and HTTPS. This keeps it closed until you intentionally
+enable service; maintenance mode alone is not a network security boundary.
+
+The mirror's pre-upgrade code and database dump, plus a post-upgrade database
+dump, are stored under
+`/Volumes/SamsungT7_2T/ownCloudBackup/owncloud/backups/pre-10.16.7-20261106_074955/`.
 
 ## mac2016 setup
 
-`prepare-mirror.sh` requires the existing 10.16.6 installation and data copy
-on Samsung T7. It creates private runtime directories and passwords, adds the
-Apache `/owncloud/` proxy include, builds the PHP image, and attaches Apache to
-the private ownCloud proxy network:
+This preparation has already been run on mac2016. It prepares private runtime
+directories and passwords and builds the isolated PHP image. The T7 code was
+then upgraded locally to 10.16.7; the original 10.16.6 code and database dump
+are retained in the backup directory above. For a fresh existing mirror, run:
 
 ```bash
 ./owncloud/prepare-mirror.sh
 ```
 
-## latitude setup
+## Latitude synchronization
 
-From the repository checkout on latitude, run once as root:
-
-```bash
-sudo ./owncloud/install-latitude-sync.sh
-```
-
-The installer registers a daily 03:45 cron job and performs the initial sync.
-The root job is necessary because latitude's ownCloud data directory is
-readable only by `www-data`. It uses the existing latitude-to-mac2016 SSH key
-and known-hosts entry. Bulk file changes sync before maintenance mode; latitude
-is briefly put in maintenance for a final file delta and consistent
-PostgreSQL 14 custom-format database dump. A trap restores source maintenance
-mode if the job fails.
-
-To configure completion emails without starting another sync, run:
-
-```bash
-sudo ./owncloud/install-sync-notifications.sh
-```
-
-This wraps the scheduled ownCloud mirror, GitLab backup transfer, and
-PostgreSQL backup jobs. Each sends a completion email to
-`hannes.software@gmx.at` with status, times, exit code, and the relevant end of
-the log. Failed PostgreSQL commands now stop the script so failures are
-reported accurately. The installer sends one test email and does not run any
-backup or sync.
-
-On mac2016, the data sync requires Homebrew rsync 3 or newer because the
-system-provided rsync 2.6.9 cannot receive the legacy Latin-1 filenames used
-by some ownCloud files. Install it before the first sync:
-
-```bash
-brew install rsync
-```
-
-The sync explicitly invokes `/usr/local/bin/rsync` on mac2016 and converts
-Latin-1 filenames to valid UTF-8 for the T7 filesystem. Already transferred
-files are reused on retry.
-
-The T7 tree has explicit safety markers. The sync refuses to run without those
-markers, the source `.ocdata` marker, ownCloud 10.16.6, and the expected source
-database. Rsync is incremental and removes mirror-only files to keep the
-standby aligned. A failed mirror database restore leaves the mirror in
-maintenance mode rather than serving mismatched data.
-
-The container mounts the T7 data at the same absolute path used on latitude
-(`/daten/owncloud/data`). The copied ownCloud database stores local storage IDs
-with that path; preserving it avoids stale file-cache references. Container
-startup creates the PHP session directory at `/mnt/data/sessions` with access
-for `www-data`, as required by the ownCloud image's PHP configuration. The
-mirror config generator is mounted from this repository so sync runs always
-use the current data-directory setting rather than a stale copy baked into an
-older image. The rsync excludes this runtime-only directory from deletion, and
-the sync recreates it before enabling the mirror after each database restore.
+The Latitude-to-mac2016 sync scripts are not part of the current operating
+procedure. Latitude is offline, mac2016 is the source, and running an old
+Latitude sync could overwrite mac2016's current files and database.
 
 ## Operations
 
@@ -92,17 +38,34 @@ the sync recreates it before enabling the mirror after each database restore.
 # On mac2016
 docker compose -f apache/docker-compose.yml --profile owncloud ps
 docker compose -f apache/docker-compose.yml --profile owncloud logs owncloud
-
-# On latitude
-sudo /usr/local/sbin/owncloud-mirror-sync
-tail -n 100 /var/log/owncloud-mirror-sync.log
 ```
 
-The mirror remains a standby, not a second independent writer. Its writes are
-replaced by the next daily source sync. ownCloud 10.16.6 and PHP 7.4 are both
-legacy software; the dedicated runtime is for compatibility and should be
-upgraded separately rather than changing the production-matched backup code
-in place. "Upgraded separately" means bumping the `owncloud/server` image tag
-in [`Dockerfile`](Dockerfile) to a current 10.x release for a patched PHP 7.4
-runtime (see above) — not touching the mounted 10.16.6 application code, which
-must keep matching latitude's real production version.
+## Enable ownCloud access
+
+The activation helper replaces the Apache deny blocks in both virtual hosts,
+validates the Apache configuration, reloads it, and checks the HTTPS status
+endpoint. It does not depend on Latitude or a sync marker:
+
+```bash
+./owncloud/activate-proxy.sh
+docker compose -f apache/docker-compose.yml --profile owncloud exec -T --user www-data owncloud \
+  php /var/www/owncloud/occ maintenance:mode --off
+```
+
+After the route check succeeds, disable maintenance mode to serve requests.
+Because mac2016 is now the source, do not sync old Latitude data over it.
+To close access again, first enable maintenance mode on mac2016:
+
+```bash
+docker compose -f apache/docker-compose.yml --profile owncloud exec -T --user www-data owncloud \
+  php /var/www/owncloud/occ maintenance:mode --on
+```
+
+Replace the two proxy `Include` lines in the active vhost with this block, then
+validate/reload Apache and confirm the URL returns HTTP 403:
+
+```apache
+<LocationMatch "^/owncloud(?:/|$)">
+    Require all denied
+</LocationMatch>
+```

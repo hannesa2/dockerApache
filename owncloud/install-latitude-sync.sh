@@ -21,15 +21,23 @@ if [[ ! -r /home/hannes/.ssh/id_rsa || ! -r /home/hannes/.ssh/known_hosts ]]; th
     exit 1
 fi
 
+if [[ -e "$CRON_FILE" ]]; then
+    echo "ERROR: $CRON_FILE is still active. Disable the legacy job before installing this Docker-source sync." >&2
+    exit 1
+fi
+
 install -o root -g root -m 0750 "$SYNC_SCRIPT" "$INSTALL_PATH"
+"$INSTALL_PATH"
+
+TEMP_CRON="$(mktemp /etc/cron.d/owncloud-mirror-sync.XXXXXX)"
 printf '%s\n' \
     'SHELL=/bin/bash' \
     'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
     '45 3 * * * root /usr/local/sbin/owncloud-mirror-sync >> /var/log/owncloud-mirror-sync.log 2>&1' \
-    > "$CRON_FILE"
-chown root:root "$CRON_FILE"
-chmod 0644 "$CRON_FILE"
+    > "$TEMP_CRON"
+chown root:root "$TEMP_CRON"
+chmod 0644 "$TEMP_CRON"
+mv "$TEMP_CRON" "$CRON_FILE"
 
 echo "Installed the daily 03:45 ownCloud mirror job on latitude."
-echo "Starting the initial synchronization now; it may take a while on the first run."
-"$INSTALL_PATH"
+echo "The initial Docker-source synchronization completed before the cron job was enabled."

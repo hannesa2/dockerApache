@@ -120,7 +120,8 @@ services:
         condition: service_healthy
     volumes:
       - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/owncloud:/var/www/owncloud
-      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/data:/daten/owncloud/data
+      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/data:/mnt/data/files
+      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/apps:/mnt/data/apps
       - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/source-config:/run/owncloud-source-config:ro
       - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/runtime-config:/var/www/owncloud/config
       - ../owncloud/prepare-mirror-config.php:/usr/local/bin/prepare-owncloud-mirror-config:ro
@@ -129,7 +130,7 @@ services:
       OWNCLOUD_DB_USER: ${OWNCLOUD_DB_USER:-owncloud}
       OWNCLOUD_DB_PASSWORD: ${OWNCLOUD_DB_PASSWORD:-change-this-owncloud-app-password}
       OWNCLOUD_PUBLIC_HOST: ${OWNCLOUD_PUBLIC_HOST:-www16.mxtracks.info:8443}
-      OWNCLOUD_VOLUME_ROOT: /daten/owncloud/data
+      OWNCLOUD_VOLUME_ROOT: /mnt/data
       APACHE_LISTEN: "8080"
       APACHE_DOCUMENT_ROOT: /var/www
     command:
