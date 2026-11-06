@@ -85,6 +85,14 @@ dockerApache/
 - Files: `tar -czf` for config; `rsync --delete` for large data trees.
 - Mirror sync (`sync-to-mirror.sh`): streams directly source → mirror via SSH pipes, no temp files.
 
+### Availability monitoring (latitude and mac2016)
+- `monitoring/systems-health-check.sh` runs on latitude hourly at minute 0. It checks services, Docker containers, and HTTP endpoints on both hosts; SSH connects from latitude to mac2016.
+- `monitoring/systems-health-check-mac.sh` runs on mac2016 hourly at minute 10. It checks mac2016 locally and latitude over SSH, so it can report a latitude outage even when latitude is offline.
+- Both monitors email `hannes.software@gmx.at` on initial status, new failures, and recovery; unchanged failures are logged without repeat email. Their state and logs are separate under `~/.local/state/systems-health-monitor/`.
+- Install or refresh each user crontab entry by running the matching script as `hannes` on that host: `monitoring/install-latitude-monitor.sh` on latitude and `monitoring/install-mac2016-monitor.sh` on mac2016. Neither installer requires sudo.
+- The mac2016 crontab explicitly sets `HOME` and `PATH` for non-interactive cron, including `/usr/local/bin` for Docker/Python tools. Preserve this environment when changing its cron entry.
+- The mac2016 monitor only provides outage alerts while mac2016 itself is powered on, network-connected, and able to send email. The latitude monitor cannot report while latitude is down; it can only observe and report its recovery after it returns.
+
 ### CI/CD (GitHub Actions)
 - Nextcloud workflow: `.github/workflows/nextcloud.yml`
   - Triggers on push to `master` and tags matching `nc-*`.
@@ -372,4 +380,3 @@ MIRROR_HTTP_PORT=8080
 MIRROR_EXTRA_PATH=/usr/local/bin    # Docker Desktop on macOS
 MIRROR_SHELL=zsh
 ```
-
