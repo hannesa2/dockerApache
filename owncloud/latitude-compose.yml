@@ -1,0 +1,66 @@
+name: owncloud-staging
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: owncloud_stage
+      POSTGRES_USER: owncloud_stage
+      POSTGRES_PASSWORD: ${OWNCLOUD_DB_PASSWORD:?Set in production.env}
+    volumes:
+      - ${OWNCLOUD_DATA_ROOT:-/daten/owncloud}/database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U owncloud_stage -d owncloud_stage"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - owncloud_stage
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - owncloud_stage
+
+  owncloud:
+    image: owncloud/server:10.16.7
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8093:8080"
+    environment:
+      OWNCLOUD_DOMAIN: localhost:8093
+      OWNCLOUD_TRUSTED_DOMAINS: localhost:8093,localhost,127.0.0.1
+      OWNCLOUD_DB_TYPE: pgsql
+      OWNCLOUD_DB_NAME: owncloud_stage
+      OWNCLOUD_DB_USERNAME: owncloud_stage
+      OWNCLOUD_DB_PASSWORD: ${OWNCLOUD_DB_PASSWORD:?Set in production.env}
+      OWNCLOUD_DB_HOST: db
+      OWNCLOUD_DB_PREFIX: oc_
+      OWNCLOUD_REDIS_ENABLED: "true"
+      OWNCLOUD_REDIS_HOST: redis
+      OWNCLOUD_CROND_ENABLED: "false"
+    volumes:
+      - ${OWNCLOUD_DATA_ROOT:-/daten/owncloud}/config:/mnt/data/config
+      - ${OWNCLOUD_DATA_ROOT:-/daten/owncloud}/data:/mnt/data/files
+      - ${OWNCLOUD_DATA_ROOT:-/daten/owncloud}/apps:/mnt/data/apps
+    networks:
+      - owncloud_stage
+      - outbound
+
+networks:
+  owncloud_stage:
+    internal: true
+  outbound:
+    driver: bridge

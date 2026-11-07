@@ -9,12 +9,12 @@ if [[ "$(id -u)" -ne 0 ]]; then
     exit 1
 fi
 
-SOURCE_ROOT="/media/hannes/T1/owncloud-staging"
-SOURCE_DATA="$SOURCE_ROOT/files"
+SOURCE_ROOT="/daten/owncloud"
+SOURCE_DATA="$SOURCE_ROOT/data"
 SOURCE_APPS="$SOURCE_ROOT/apps"
 SOURCE_CONFIG="$SOURCE_ROOT/config"
-SOURCE_ENV="$SOURCE_ROOT/staging.env"
-SOURCE_COMPOSE="/home/hannes/git/dockerApache/owncloud-staging/compose.yml"
+SOURCE_ENV="$SOURCE_ROOT/production.env"
+SOURCE_COMPOSE="/home/hannes/git/dockerApache/owncloud/latitude-compose.yml"
 SOURCE_PROJECT="owncloud-staging"
 SOURCE_WEB="owncloud-staging-owncloud-1"
 SOURCE_DB="owncloud-staging-db-1"
@@ -169,9 +169,9 @@ done
 [[ -d "$SOURCE_DATA" && -f "$SOURCE_DATA/.ocdata" ]] || die "Latitude Docker ownCloud data is unavailable."
 [[ -d "$SOURCE_APPS" && -d "$SOURCE_CONFIG" && -f "$SOURCE_CONFIG/config.php" ]] ||
     die "Latitude Docker ownCloud apps or config are unavailable."
-mountpoint -q /media/hannes/T1 || die "T1 is not mounted."
-[[ "$(findmnt -n -o FSTYPE --target /media/hannes/T1)" == "ext4" ]] ||
-    die "Expected the production Docker data disk T1 to be ext4."
+mountpoint -q /daten || die "/daten is not mounted."
+[[ "$(findmnt -n -o FSTYPE --target /daten)" == "ext4" ]] ||
+    die "Expected the internal production data disk to be ext4."
 
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
     die "Another ownCloud sync or staging operation holds the lock: $LOCK_DIR"
@@ -189,7 +189,7 @@ SOURCE_DB_ID="$(source_compose ps -q db)"
 [[ "$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$SOURCE_WEB_ID")" == "$SOURCE_PROJECT" ]] ||
     die "Production ownCloud is not from the expected Docker Compose project."
 [[ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/mnt/data/files"}}{{.Source}}{{end}}{{end}}' "$SOURCE_WEB_ID")" == "$SOURCE_DATA" ]] ||
-    die "Production ownCloud is not using the expected T1 data directory."
+    die "Production ownCloud is not using the expected internal data directory."
 [[ "$(docker inspect -f '{{.State.Health.Status}}' "$SOURCE_DB_ID")" == "healthy" ]] ||
     die "Production ownCloud PostgreSQL is not healthy."
 SOURCE_IMAGE_ID="$(docker inspect -f '{{.Image}}' "$SOURCE_WEB_ID")"

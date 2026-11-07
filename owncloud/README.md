@@ -32,6 +32,75 @@ The Latitude-to-mac2016 sync scripts are not part of the current operating
 procedure. Latitude is offline, mac2016 is the source, and running an old
 Latitude sync could overwrite mac2016's current files and database.
 
+## Latitude: move production off the temporary T1 disk
+
+The production containers still use the `owncloud-staging` project name after
+the 10.16.7 cutover. Until the following migration is executed, their database,
+config, apps, and files remain on `/media/hannes/T1/owncloud-staging`.
+Switching Git branches or validating Compose does not relocate these mounts.
+
+The permanent stack is `latitude-compose.yml`. It keeps the project name,
+network names, database credentials/identity, images, and loopback port 8093,
+but stores files in `/daten/owncloud/data` and database, config, and apps in
+sibling directories under `/daten/owncloud`. Its root-only credentials are
+stored in `/daten/owncloud/production.env`; no `OWNCLOUD_STAGE_*` variables
+are required for permanent operation.
+
+Run directly on Latitude in a sudo-capable terminal:
+
+```bash
+cd /home/hannes/git/dockerApache
+sudo bash owncloud/move-latitude-storage.sh --preflight
+# Only after reviewing the comparison and passing all checks:
+sudo bash owncloud/move-latitude-storage.sh --migrate
+```
+
+Preflight only reads application data. It checks the source mounts, both HTTP
+routes, old native maintenance mode, internal mount, and sufficient free space,
+and prints a dry-run rsync summary. It refuses an active mirror cron job:
+keep that job disabled until the authoritative Latitude/mac2016 data source
+has been decided. The actual migration updates the existing internal data
+incrementally, including deletions, so the old native copy is no longer a
+separate rollback copy. It must remain in maintenance.
+
+HTTPS checks connect directly to the local Apache with
+`--resolve www.mxtracks.info:443:127.0.0.1`, retaining hostname and certificate
+verification. This avoids the Fritz!Box/public-DNS hairpin path; it verifies
+the local production proxy, not external internet reachability.
+
+The migration first copies files online, then enables maintenance for the final
+sync and consistent PostgreSQL dump. It copies the PostgreSQL cluster only
+after stopping its container, recreates the project on internal storage, and
+checks both routes before releasing maintenance. T1 is not deleted. Failure
+before release attempts to restart T1 production; once internal production may
+accept writes, automatic rollback is deliberately disabled.
+
+Logs, the database dump, configuration/apps archive, and old environment file
+are stored under `/daten/owncloud/backups/pre-internal-<timestamp>/`. Protect
+these credentials and additionally back up to a different disk/host. A failed
+run leaves partial internal state for inspection; do not blindly rerun it.
+An installed mirror sync script is backed up and refreshed to use internal
+storage, but no mirror job is started or enabled. The migration also installs
+`/etc/systemd/system/docker.service.d/owncloud-data.conf`: Docker will require
+`/daten` to be mounted before starting on future boots. If the encrypted data
+disk cannot be unlocked/mounted, Docker will not start (including other stacks),
+rather than silently starting ownCloud against an empty directory. Docker is
+not restarted during installation of this guard.
+
+After successful migration, manage production with:
+
+```bash
+sudo docker compose --env-file /daten/owncloud/production.env \
+  -f owncloud/latitude-compose.yml ps
+sudo docker compose --env-file /daten/owncloud/production.env \
+  -f owncloud/latitude-compose.yml up -d
+```
+
+Do not use the staging clone/upgrade/cutover scripts for this production stack.
+Before removing T1, confirm no production container mounts it and perform a
+controlled restart with `/daten` mounted. `/daten` is an encrypted internal
+disk and must be mounted before Docker starts its containers after boot.
+
 ## Operations
 
 ```bash

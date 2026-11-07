@@ -1,5 +1,11 @@
 # ownCloud 10.16.7 staging copy
 
+After production cutover, these scripts are historical migration tools, not
+the permanent production setup. To remove the temporary T1 dependency while
+preserving current production writes, follow
+[`../owncloud/README.md`](../owncloud/README.md#latitude-move-production-off-the-temporary-t1-disk).
+Do not rerun cloning or cutover against the old native copy.
+
 This stack clones the native ownCloud installation to a separate database and
 data directory. It does not alter the native installation and binds the test
 web port to `127.0.0.1` only.
