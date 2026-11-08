@@ -103,6 +103,92 @@ disk and must be mounted before Docker starts its containers after boot.
 
 ## Operations
 
+### Latitude: isolated 10.16.7 to 11.1.0 upgrade test
+
+ownCloud Server 11.1.0 is the official release dated November 3, 2026. Its
+official `owncloud/server:11.1.0` image was verified to contain PHP 8.3.6.
+The test does not change the production image or remove host PHP packages.
+
+Run the read-only preflight directly on Latitude:
+
+```bash
+cd /home/hannes/git/dockerApache
+sudo bash owncloud/prepare-upgrade-test.sh --preflight
+```
+
+After review, `--prepare` refreshes the old T1 files from current production
+(including deletions), snapshots the production database/config/apps under
+a brief maintenance window, then returns production to service before
+attempting the isolated upgrade:
+
+```bash
+sudo bash owncloud/prepare-upgrade-test.sh --prepare
+```
+
+Preparation reuses locally available Docker images and pulls only missing
+images before changing data. Test startup disables automatic pulls. If a
+missing-image pull fails because the sudo Docker credential helper is
+unconfigured, resolve that login configuration or pull the public image as
+the regular Docker user first; no test snapshot has been started at that point.
+
+**This consumes the old T1 rollback file snapshot.** Old T1 database/config
+directories are not modified, but must no longer be treated as a consistent
+rollback set with the refreshed files. Keep an independent current backup.
+Fresh test state and its root-only environment are in
+`/media/hannes/T1/owncloud-upgrade-11.1`; file data is reused from
+`/media/hannes/T1/owncloud-staging/files` to avoid a second 795 GB copy.
+Preparation refuses existing test state and is not blindly resumable.
+If preparation stops while verifying production recovery after the completed
+snapshot, `--resume-snapshot` can continue that snapshot without recopying files
+or stopping production. It requires the dump, original maintenance config and
+snapshot log, and refuses any already-created test database or containers.
+Do not use it after the test upgrade has started. Maintenance-off HTTP checks
+allow a bounded delay for the web runtime to observe the CLI config change.
+
+The test stack has a separate project, database, Redis and internal-only
+network, no automatic restart, no background cron, and bounded Docker logs.
+It binds only localhost:8094. Access from your client:
+
+```bash
+ssh -N -L 8094:127.0.0.1:8094 latitude
+```
+
+Open `http://localhost:8094`, and verify login, download/upload, encrypted
+files, contacts, sharing, and enabled apps. Outbound integrations (mail,
+external storage, federation, OnlyOffice) cannot reach production or the
+internet and cannot be validated in this isolated test. Review disabled apps
+after the upgrade: compatibility is not established by a healthy status alone.
+
+For logs and stopping the test, use sudo on Latitude:
+
+```bash
+sudo docker compose --env-file /media/hannes/T1/owncloud-upgrade-11.1/test.env \
+  -f owncloud/upgrade-test-compose.yml logs --tail 100 owncloud
+sudo docker compose --env-file /media/hannes/T1/owncloud-upgrade-11.1/test.env \
+  -f owncloud/upgrade-test-compose.yml stop
+```
+
+No production cutover is included. Production remains under `/daten/owncloud`
+and must not become dependent on T1 again. Removing host PHP 7 requires a
+separate review of Apache handlers, CLI defaults and native scheduled jobs;
+Apache on Latitude still loads mod_php7.4 even though production ownCloud is
+already dockerized.
+
+If the isolated upgrade stops because Marketplace access is blocked and reports
+`checksum`, `contacts`, and `files_textviewer` as incompatible, the targeted
+recovery helper downloads official Contacts 1.6.0 on the host and installs it
+offline. It preserves the old Contacts code and disables only `checksum` and
+`files_textviewer` in the test database; neither has a compatible release in the
+11.1 Marketplace catalogue. It does not open the isolated network or alter
+production. Run against the stopped, existing test:
+
+```bash
+sudo bash owncloud/resume-upgrade-apps.sh
+```
+
+Contacts data remains in the cloned database. Verify contact listing/editing
+and app compatibility in the test before considering a production cutover.
+
 ```bash
 # On mac2016
 docker compose -f apache/docker-compose.yml --profile owncloud ps

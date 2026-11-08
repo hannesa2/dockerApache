@@ -137,8 +137,7 @@ source_compose() {
 }
 
 source_occ() {
-    source_compose exec -T --user www-data owncloud /bin/bash -ec \
-        'source /etc/owncloud.d/20-config.sh && exec /usr/bin/occ "$@"' owncloud-cli "$@"
+    source_compose exec -T --user www-data owncloud php /var/www/owncloud/occ "$@"
 }
 
 cleanup() {

@@ -350,6 +350,22 @@ are reported even if Latitude never starts. Both send an initial report, then
 email only when checks fail or recover; unchanged failures are logged without
 hourly email spam.
 
+GitLab login-page checks allow 30 seconds on both hosts, compared with 8
+seconds for other HTTP checks. This still checks the real login route; a
+healthy container alone does not prove the web application is available.
+
+The manually deployed Latitude GitLab can be recreated with bounded Docker
+logs using `python3 monitoring/recreate-gitlab-logrotation.py --apply`, as a
+user with Docker socket access, while `gitlab` is stopped. The helper preserves
+the exact local image, configuration (including private environment), ports,
+and `/srv/gitlab` bind mounts; it does not upgrade GitLab. Logs are limited to
+three 50 MB files. Private original deployment metadata is saved under
+`~/.local/state/gitlab-logrotation/<timestamp>/`.
+The old container is retained as `gitlab-pre-logrotation-<timestamp>` with
+automatic restart disabled. Never start both containers: their database files
+are shared. These log bounds must also be retained in any future replacement
+deployment; changing daemon defaults does not retrofit existing containers.
+
 Install it on latitude from the current checkout:
 
 ```bash

@@ -31,8 +31,7 @@ target_compose() {
     docker compose -p owncloud-staging --env-file "$TARGET_ENV" -f "$TARGET_COMPOSE" "$@"
 }
 occ() {
-    docker exec --user www-data owncloud-staging-owncloud-1 /bin/bash -ec \
-        'source /etc/owncloud.d/20-config.sh && exec /usr/bin/occ "$@"' owncloud-cli "$@"
+    docker exec --user www-data owncloud-staging-owncloud-1 php /var/www/owncloud/occ "$@"
 }
 check_status() {
     local response

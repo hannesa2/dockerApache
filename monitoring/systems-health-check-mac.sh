@@ -77,9 +77,10 @@ check_http() {
     local name="$1"
     local url="$2"
     local resolve="${3:-}"
+    local max_time="${4:-8}"
     local code
     local options=(--silent --insecure --output /dev/null --write-out '%{http_code}' \
-        --connect-timeout 3 --max-time 8)
+        --connect-timeout 3 --max-time "$max_time")
     if [[ -n "$resolve" ]]; then
         options+=(--resolve "$resolve")
     fi
@@ -148,7 +149,7 @@ check_http "mac2016 Nextcloud" "http://127.0.0.1:8082/status.php"
 check_http "mac2016 ownCloud" "https://www16.mxtracks.info:9443/owncloud/status.php" \
     "www16.mxtracks.info:9443:127.0.0.1"
 check_http "mac2016 GitLab mirror" "https://git16.mxtracks.info:9443/users/sign_in" \
-    "git16.mxtracks.info:9443:127.0.0.1"
+    "git16.mxtracks.info:9443:127.0.0.1" 30
 check_http "mac2016 MXServer" "https://www16.mxtracks.info:9433/backend/MXServer/rest/version" \
     "www16.mxtracks.info:9433:127.0.0.1"
 
@@ -206,8 +207,9 @@ check_http() {
     local name="$1"
     local url="$2"
     local code
+    local max_time="${3:-8}"
     code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-        --connect-timeout 3 --max-time 8 "$url" 2>/dev/null)" || code="000"
+        --connect-timeout 3 --max-time "$max_time" "$url" 2>/dev/null)" || code="000"
     case "$code" in
         2[0-9][0-9]|3[0-9][0-9]|401|403)
             printf 'CHECK|OK|%s|HTTP %s\n' "$name" "$code"
@@ -232,7 +234,7 @@ done
 check_http "Latitude native Apache" "http://127.0.0.1/"
 check_http "Latitude GlassFish" "http://127.0.0.1:8081/"
 check_http "Latitude Apache container" "http://127.0.0.1:8085/"
-check_http "Latitude GitLab" "http://127.0.0.1:8083/users/sign_in"
+check_http "Latitude GitLab" "http://127.0.0.1:8083/users/sign_in" 30
 check_http "Latitude Home Assistant" "http://127.0.0.1:8123/"
 
 owncloud_status="$(curl --silent --fail --connect-timeout 3 --max-time 8 \
