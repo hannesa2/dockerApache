@@ -1,15 +1,22 @@
-# ownCloud on mac2016
+# ownCloud on Latitude and mac2016
 
-mac2016 is the current ownCloud source; Latitude is offline. No Latitude sync
-is needed or should be run for this setup. ownCloud on mac2016 was upgraded
-locally from 10.16.6 to 10.16.7 in its isolated
-`owncloud/server:10.16.7` PHP runtime and PostgreSQL 16 database. The database
-schema upgrade completed successfully. User files and database contents are
-the existing mac2016 copy; they were not replaced from Latitude.
+Latitude is production; mac2016 is the standby mirror. Both were upgraded to
+ownCloud 11.1.0 on November 9, 2026 and run with PHP 8.3.6 and PostgreSQL 16.
+Both are online with maintenance disabled. The mirror is a separate copy, not
+continuous live replication: its currency depends on successful synchronization.
+Do not allow independent writes on both instances if an exact standby is needed.
 
-The application currently remains in maintenance mode, and Apache denies
-`/owncloud` on both HTTP and HTTPS. This keeps it closed until you intentionally
-enable service; maintenance mode alone is not a network security boundary.
+The mac2016 upgrade used `upgrade-mac2016.sh` without an additional backup as
+requested. Both its PHP image and bind-mounted code were updated; Contacts
+1.6.0 was installed, and incompatible `checksum`, `files_textviewer` and legacy
+`gallery` were disabled. PDF and media viewers remain enabled.
+The mirror data mount must target `/mnt/data/files`, matching persisted account
+homes. Concurrent deployment edits briefly broke this mapping; the main user's
+cache was recovered from Latitude with original file IDs retained.
+4,154 reversible double-encoded filenames were normalized without changing
+file contents; one collision was retained without overwriting. The helper
+`fix-mirror-filenames.py` defaults to a dry run and requires `--apply` to rename.
+Representative JPEG/PDF/MOV/MP4 streams and an image thumbnail were verified.
 
 The mirror's pre-upgrade code and database dump, plus a post-upgrade database
 dump, are stored under
@@ -17,10 +24,10 @@ dump, are stored under
 
 ## mac2016 setup
 
-This preparation has already been run on mac2016. It prepares private runtime
-directories and passwords and builds the isolated PHP image. The T7 code was
-then upgraded locally to 10.16.7; the original 10.16.6 code and database dump
-are retained in the backup directory above. For a fresh existing mirror, run:
+This preparation was originally run on mac2016 before its upgrades. It prepares
+private runtime directories and passwords and builds the isolated PHP image.
+Do not rerun it against the upgraded instance: the old source configuration
+is not the current 11.1 runtime configuration. For a fresh existing mirror, run:
 
 ```bash
 ./owncloud/prepare-mirror.sh
@@ -28,9 +35,10 @@ are retained in the backup directory above. For a fresh existing mirror, run:
 
 ## Latitude synchronization
 
-The Latitude-to-mac2016 sync scripts are not part of the current operating
-procedure. Latitude is offline, mac2016 is the source, and running an old
-Latitude sync could overwrite mac2016's current files and database.
+Latitude is the authoritative source again. The version upgrade did not start
+or enable any sync job. Review source paths, runtime version and schedules
+before enabling replication; this standalone mirror upgrade did not refresh
+all mirror files or import the full current production database.
 
 ## Latitude: move production off the temporary T1 disk
 
@@ -103,6 +111,41 @@ disk and must be mounted before Docker starts its containers after boot.
 
 ## Operations
 
+### Latitude: controlled production upgrade to 11.1.0
+
+After the isolated browser test succeeds, run on Latitude:
+
+```bash
+sudo bash owncloud/upgrade-latitude.sh --preflight
+sudo bash owncloud/upgrade-latitude.sh --apply
+```
+
+Apply consumes the approved T1 test file copy: it stops the test web container
+and refreshes `/media/hannes/T1/owncloud-staging/files` from current production,
+including deletions. Under a production maintenance window it makes the final
+file sync and saves a consistent database dump, config/apps archive and private
+deployment metadata under `/media/hannes/T1/owncloud-production-pre-11.1`.
+This is the independent pre-upgrade backup; never run test preparation or
+recovery against its file tree afterwards. The old test database no longer
+matches these files. Keep T1 until the new production has been verified and
+another independent backup is available.
+
+The upgrade installs verified Contacts 1.6.0, disables `checksum` and
+`files_textviewer`, repairs persisted user-home/upload paths using the same
+transaction tested in the isolated clone, and explicitly runs `occ upgrade`.
+ONLYOFFICE is not disabled in production. Before releasing maintenance it
+checks version/schema status over loopback and the local TLS proxy and reads
+representative JPEG/PDF/MOV/MP4 streams through ownCloud.
+
+The Compose default remains 10.16.7; successful cutover persists
+`OWNCLOUD_IMAGE=owncloud/server:11.1.0` in the private `production.env` so normal
+Compose invocations recreate the upgraded version. The script refuses existing
+upgrade backup state. Failures after the maintenance window begins leave the
+web container offline for inspection; never start 10.16.7 against an upgraded
+database. Rollback requires the saved database, config and apps together, plus
+the matching file backup. No automatic rollback occurs after release because
+users may have written new data. Host PHP removal is a separate operation.
+
 ### Latitude: isolated 10.16.7 to 11.1.0 upgrade test
 
 ownCloud Server 11.1.0 is the official release dated November 3, 2026. Its
@@ -147,10 +190,14 @@ allow a bounded delay for the web runtime to observe the CLI config change.
 
 The test stack has a separate project, database, Redis and internal-only
 network, no automatic restart, no background cron, and bounded Docker logs.
-It binds only localhost:8094. Access from your client:
+It publishes no host ports: Docker does not expose published ports on this
+internal network. The scripts check HTTP through the container's bridge IP
+with the trusted `Host: localhost:8094` header. Access from your client using
+the current test IP (it can change when the container is recreated):
 
 ```bash
-ssh -N -L 8094:127.0.0.1:8094 latitude
+TEST_IP="$(ssh latitude 'docker inspect -f '\''{{with index .NetworkSettings.Networks "owncloud-upgrade-test_isolated"}}{{.IPAddress}}{{end}}'\'' owncloud-upgrade-test-owncloud-1')"
+test -n "$TEST_IP" && ssh -N -L "127.0.0.1:8094:$TEST_IP:8080" latitude
 ```
 
 Open `http://localhost:8094`, and verify login, download/upload, encrypted
@@ -176,15 +223,33 @@ already dockerized.
 
 If the isolated upgrade stops because Marketplace access is blocked and reports
 `checksum`, `contacts`, and `files_textviewer` as incompatible, the targeted
-recovery helper downloads official Contacts 1.6.0 on the host and installs it
-offline. It preserves the old Contacts code and disables only `checksum` and
-`files_textviewer` in the test database; neither has a compatible release in the
-11.1 Marketplace catalogue. It does not open the isolated network or alter
-production. Run against the stopped, existing test:
+recovery helper installs official Contacts 1.6.0 offline. It verifies the
+release archive against its SHA-256 before use. If GitHub returns an error,
+stage the previously verified archive at `/home/hannes/contacts-1.6.0.tar.gz`;
+otherwise the helper retries the official download to a temporary file and
+discards it unless its checksum matches. The helper preserves the old Contacts
+code and disables only `checksum` and `files_textviewer` in the test database;
+neither has a compatible release in the 11.1 Marketplace catalogue. It does
+not open the isolated network or alter production. Run against the stopped,
+existing test:
 
 ```bash
 sudo bash owncloud/resume-upgrade-apps.sh
 ```
+
+Recovery releases maintenance only in the isolated copy before explicitly
+running `occ upgrade`. Exit status 3 means it is already up to date; other
+nonzero upgrade statuses stop recovery. A retained maintenance flag otherwise
+causes the image's startup upgrade to skip work indefinitely.
+
+Both preparation and recovery relocate cloned `oc_accounts.home` values from
+`/daten/owncloud/data/<user>` to `/mnt/data/files/<user>`, along with upload
+storage paths. Changing `datadirectory` alone does not relocate persisted user
+homes. The transactional repair preserves account IDs, numeric storage IDs,
+file-cache rows and share references; unexpected home paths abort the repair.
+Historical data-root cache entries are retained, not merged or deleted.
+Recovery also disables ONLYOFFICE only in the test, so PDF/media viewing does
+not depend on an external document server blocked by the isolated network.
 
 Contacts data remains in the cloned database. Verify contact listing/editing
 and app compatibility in the test before considering a production cutover.

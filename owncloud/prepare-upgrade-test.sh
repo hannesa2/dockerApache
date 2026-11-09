@@ -38,8 +38,11 @@ wait_source_normal() {
     local attempt response
     local url="${1:-http://127.0.0.1:8093/status.php}"
     local version="${2:-10.16.7}"
+    local host="${3:-}"
+    local -a headers=()
+    [[ -z "$host" ]] || headers=(--header "Host: $host")
     for attempt in {1..30}; do
-        if response="$(curl -fsS --max-time 5 "$url" 2>/dev/null)" &&
+        if response="$(curl --noproxy '*' "${headers[@]}" -fsS --max-time 5 "$url" 2>/dev/null)" &&
             python3 -c '
 import json, sys
 s = json.load(sys.stdin)
@@ -100,6 +103,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 (( EUID == 0 )) || fail "Run directly on latitude with sudo."
+[[ ! -e /media/hannes/T1/owncloud-production-pre-11.1 ]] ||
+    fail "T1 files were reserved for the production backup; do not reuse them for a test."
 MODE="${1:---preflight}"
 [[ "$MODE" == "--preflight" || "$MODE" == "--prepare" || "$MODE" == "--resume-snapshot" ]] ||
     fail "Usage: $0 [--preflight|--prepare|--resume-snapshot]"
@@ -238,7 +243,7 @@ $CONFIG['dbuser'] = 'owncloud_stage';
 $CONFIG['dbpassword'] = getenv('TEST_DB_PASSWORD');
 $CONFIG['datadirectory'] = '/mnt/data/files';
 $CONFIG['redis'] = ['host' => 'redis', 'port' => 6379];
-$CONFIG['maintenance'] = true;
+$CONFIG['maintenance'] = false;
 $CONFIG['apps_paths'] = [
     ['path' => '/var/www/owncloud/apps', 'url' => '/apps', 'writable' => false],
     ['path' => '/var/www/owncloud/custom', 'url' => '/custom', 'writable' => true],
@@ -257,11 +262,18 @@ PHP
 test_compose up -d --pull never --wait --wait-timeout 180 db redis
 test_compose exec -T db pg_restore --exit-on-error --no-owner \
     -U owncloud_stage -d owncloud_stage < "$STATE/source.dump"
+test_compose exec -T db psql -X -v ON_ERROR_STOP=1 \
+    -U owncloud_stage -d owncloud_stage < "$SCRIPT_DIR/repair-test-homes.sql"
 test_compose up -d --pull never owncloud
+TEST_IP="$(docker inspect -f '{{with index .NetworkSettings.Networks "owncloud-upgrade-test_isolated"}}{{.IPAddress}}{{end}}' \
+    owncloud-upgrade-test-owncloud-1)"
+[[ -n "$TEST_IP" ]] || fail "Test has no isolated-network address."
+TEST_URL="http://$TEST_IP:8080/status.php"
 log "Waiting up to twenty minutes for the isolated 11.1 upgrade; detailed errors remain in test container logs."
 ready=0
 for attempt in {1..240}; do
-    response="$(curl -fsS --max-time 5 http://127.0.0.1:8094/status.php 2>/dev/null)" || response=""
+    response="$(curl --noproxy '*' --header 'Host: localhost:8094' \
+        -fsS --max-time 5 "$TEST_URL" 2>/dev/null)" || response=""
     if [[ -n "$response" ]] && python3 -c '
 import json, sys
 s = json.load(sys.stdin)
@@ -277,8 +289,8 @@ sys.exit(0 if s.get("installed") and s.get("versionstring") == "11.1.0"
 done
 (( ready )) || fail "Upgrade did not become ready. Inspect test logs; production remains 10.16.7."
 test_compose exec -T --user www-data owncloud php /var/www/owncloud/occ maintenance:mode --off
-wait_source_normal http://127.0.0.1:8094/status.php 11.1.0
-response="$(curl -fsS --max-time 15 http://127.0.0.1:8094/status.php)" ||
+wait_source_normal "$TEST_URL" 11.1.0 localhost:8094
+response="$(curl --noproxy '*' --header 'Host: localhost:8094' -fsS --max-time 15 "$TEST_URL")" ||
     fail "Test status request failed after disabling maintenance."
 python3 -c '
 import json, sys
@@ -289,6 +301,7 @@ assert not s.get("needsDbUpgrade") and not s.get("maintenance")
 test_compose exec -T --user www-data owncloud php /var/www/owncloud/occ status --output=json
 test_compose exec -T --user www-data owncloud php /var/www/owncloud/occ app:list
 source_status
-log "Isolated ownCloud 11.1.0 test available on localhost:8094. Production remains 10.16.7 on internal storage."
+log "Test access from your client: ssh -N -L 127.0.0.1:8094:$TEST_IP:8080 latitude"
+log "Open http://localhost:8094. Production remains 10.16.7 on internal storage."
 log "Internet, mail, external storage and OnlyOffice are intentionally unreachable from the isolated test."
 log "This is not a production cutover. Test accounts, encrypted files, contacts, downloads, uploads and app compatibility."

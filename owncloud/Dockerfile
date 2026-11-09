@@ -1,4 +1,4 @@
-FROM owncloud/server:10.16.7
+FROM owncloud/server:11.1.0
 
 ARG OWNCLOUD_UID=504
 

@@ -366,6 +366,30 @@ automatic restart disabled. Never start both containers: their database files
 are shared. These log bounds must also be retained in any future replacement
 deployment; changing daemon defaults does not retrofit existing containers.
 
+### Removing host PHP 7.x on latitude
+
+The web applications use PHP 8.4 FPM; the legacy Apache PHP module and CLI
+alternatives still need to be removed separately. After repairing any Apache
+configuration errors, run the preflight and then the apply mode on latitude:
+
+```bash
+sudo bash monitoring/remove-host-php7.sh --preflight
+sudo bash monitoring/remove-host-php7.sh --apply
+```
+
+The helper routes the mxdocs web root through PHP 8.4 FPM, disables enabled
+PHP 7 Apache modules, verifies the Apache config and that Matomo and both
+WordPress endpoints retain their current HTTP responses, then purges installed
+PHP 7.x packages without `autoremove`. It keeps a root-only record under
+`/root/.local/state/remove-host-php7/`. The mxdocs WordPress endpoint currently
+returns HTTP 500 because of a pre-existing `wp-config.php` syntax error; the
+helper checks that its response does not regress but does not repair it.
+
+Do not run `--apply` while `sudo apache2ctl -t` fails. An unprivileged test
+can report certificate files as missing simply because it cannot access
+protected Let's Encrypt directories. Latitude's privileged configuration test
+passed on November 9, 2026; no certificate-path defect was established.
+
 Install it on latitude from the current checkout:
 
 ```bash

@@ -30,8 +30,9 @@ services:
       - owncloud_stage
 
   owncloud:
-    image: owncloud/server:10.16.7
+    image: ${OWNCLOUD_IMAGE:-owncloud/server:10.16.7}
     restart: unless-stopped
+    stop_grace_period: 60s
     depends_on:
       db:
         condition: service_healthy
