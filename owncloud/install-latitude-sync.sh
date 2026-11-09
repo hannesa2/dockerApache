@@ -27,17 +27,19 @@ if [[ -e "$CRON_FILE" ]]; then
 fi
 
 install -o root -g root -m 0750 "$SYNC_SCRIPT" "$INSTALL_PATH"
-"$INSTALL_PATH"
+[[ -x /usr/local/sbin/run-sync-with-email && -r /home/hannes/bin/sync-job-report.py ]] ||
+    { echo "ERROR: Install monitoring/install-sync-job-status.sh first." >&2; exit 1; }
+/usr/local/sbin/run-sync-with-email "ownCloud mirror sync" "$INSTALL_PATH"
 
 TEMP_CRON="$(mktemp /etc/cron.d/owncloud-mirror-sync.XXXXXX)"
 printf '%s\n' \
     'SHELL=/bin/bash' \
     'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
-    '45 3 * * * root /usr/local/sbin/owncloud-mirror-sync >> /var/log/owncloud-mirror-sync.log 2>&1' \
+    '0 4 * * * root /usr/local/sbin/run-sync-with-email "ownCloud mirror sync" /usr/local/sbin/owncloud-mirror-sync >> /var/log/owncloud-mirror-sync.log 2>&1' \
     > "$TEMP_CRON"
 chown root:root "$TEMP_CRON"
 chmod 0644 "$TEMP_CRON"
 mv "$TEMP_CRON" "$CRON_FILE"
 
-echo "Installed the daily 03:45 ownCloud mirror job on latitude."
+echo "Installed the daily 04:00 ownCloud mirror job on latitude."
 echo "The initial Docker-source synchronization completed before the cron job was enabled."

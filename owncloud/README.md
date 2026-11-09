@@ -40,6 +40,36 @@ or enable any sync job. Review source paths, runtime version and schedules
 before enabling replication; this standalone mirror upgrade did not refresh
 all mirror files or import the full current production database.
 
+To enable the daily **04:00 Latitude time** ownCloud sync, run directly on
+Latitude in a sudo-capable session:
+
+```bash
+sudo bash monitoring/install-sync-job-status.sh
+sudo bash owncloud/install-latitude-sync.sh
+```
+
+The installer first runs a complete 11.1.0 sync and installs the cron entry only
+after success. It refuses an existing cron file rather than creating duplicate
+jobs. The job-email wrapper records start/completion/result for availability
+reports. Files (including deletions), writable apps, mirror-only configuration
+and PostgreSQL are synchronized from Latitude. Filenames are already UTF-8;
+the former ISO-8859-1 conversion must not be applied to these production files.
+Production is briefly stopped in maintenance for the final consistent file/DB
+snapshot, then returned online. The mirror is stopped during synchronization
+and becomes reachable again afterwards, as requested. Writes made independently
+on mac2016 are overwritten by the next sync. This is daily replication, not
+continuous synchronization.
+
+Some historical trash files on Latitude had Latin-1 filenames mixed with valid
+UTF-8. On November 9, 2026, 115 invalid names were normalized; one collision
+was retained under a unique `latin1-conflict-…` name without overwriting either
+file. Changes are journaled in the production config directory as
+`filename-normalization-<timestamp>.jsonl` with base64 paths. The
+`normalize-latitude-filenames.php` helper defaults to preflight; apply must run
+with the production web container stopped. It refuses invalid names outside
+the trash tree pending separate metadata review. A blanket rsync Latin-1
+conversion is not appropriate for this mixed-encoding source.
+
 ## Latitude: move production off the temporary T1 disk
 
 The production containers still use the `owncloud-staging` project name after

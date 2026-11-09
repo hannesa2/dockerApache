@@ -40,6 +40,7 @@ CODE_STAGE="$MIRROR_ROOT/owncloud-code-$TIMESTAMP"
 CODE_ROLLBACK="$MIRROR_ROOT/owncloud-pre-sync-$TIMESTAMP"
 LOCK_ACQUIRED=0
 SOURCE_MAINTENANCE_CHANGED=0
+SOURCE_STOPPED=0
 
 die() {
     echo "ERROR: $*" >&2
@@ -68,7 +69,6 @@ RSYNC_SSH="ssh -i $SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostK
 sync_data() {
     echo "Syncing ownCloud files to mac2016..."
     rsync -rltp --delete --partial \
-        --iconv=ISO-8859-1,UTF-8 \
         --rsync-path=/usr/local/bin/rsync \
         --exclude=/.owncloud-mirror-managed \
         --exclude=/sessions/ \
@@ -100,7 +100,7 @@ sync_config() {
 }
 
 sync_code() {
-    echo "Streaming ownCloud 10.16.7 application code from the running Docker image..."
+    echo "Streaming ownCloud $SOURCE_VERSION application code from the running Docker image..."
     remote "mkdir '$CODE_STAGE'"
     docker exec "$SOURCE_WEB_ID" tar \
         --exclude=./config \
@@ -118,8 +118,9 @@ sync_code() {
 
     remote "set -e
         VERSION=\$(grep -oE \"OC_VersionString = '[0-9.]+\" '$CODE_STAGE/version.php' | grep -oE '[0-9.]+$')
-        [ \"\$VERSION\" = '10.16.7' ]
-        mkdir -p '$CODE_STAGE/config' '$CODE_STAGE/custom'
+        [ \"\$VERSION\" = '$SOURCE_VERSION' ]
+        mkdir -p '$CODE_STAGE/config'
+        ln -s /mnt/data/apps '$CODE_STAGE/custom'
         touch '$CODE_STAGE/.owncloud-mirror-managed'
         if [ -e '$CODE_ROLLBACK' ]; then
             echo 'Rollback code path already exists; refusing to overwrite it.' >&2
@@ -140,13 +141,45 @@ source_occ() {
     source_compose exec -T --user www-data owncloud php /var/www/owncloud/occ "$@"
 }
 
+wait_source_normal() {
+    local attempt response
+    for attempt in {1..60}; do
+        if response="$(curl --noproxy '*' -fsS --max-time 5 \
+            http://127.0.0.1:8093/status.php 2>/dev/null)" &&
+            python3 -c '
+import json,sys
+s=json.load(sys.stdin)
+sys.exit(0 if s.get("installed") and s.get("versionstring") == "11.1.0"
+    and not s.get("maintenance") and not s.get("needsDbUpgrade") else 1)
+' <<< "$response"; then
+            return 0
+        fi
+        sleep 2
+    done
+    echo "ERROR: Production did not return healthy HTTP status within the recovery window." >&2
+    return 1
+}
+
 cleanup() {
     local exit_code=$?
     trap - EXIT INT TERM
+    if (( SOURCE_STOPPED )); then
+        if ! docker start "$SOURCE_WEB_ID"; then
+            echo "ERROR: Could not restart production ownCloud." >&2
+            exit_code=1
+        else
+            for attempt in {1..60}; do
+                docker exec "$SOURCE_WEB_ID" test -f /var/www/owncloud/occ && break
+                sleep 2
+            done
+        fi
+    fi
     if (( SOURCE_MAINTENANCE_CHANGED )); then
         echo "Restoring the production ownCloud from maintenance mode..." >&2
         if ! source_occ maintenance:mode --off; then
             echo "ERROR: Could not disable production ownCloud maintenance mode." >&2
+            exit_code=1
+        elif ! wait_source_normal; then
             exit_code=1
         fi
     fi
@@ -195,11 +228,11 @@ SOURCE_IMAGE_ID="$(docker inspect -f '{{.Image}}' "$SOURCE_WEB_ID")"
 [[ "$SOURCE_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] ||
     die "Could not determine the immutable production ownCloud image ID."
 SOURCE_VERSION="$(docker exec "$SOURCE_WEB_ID" grep -oE "OC_VersionString = '[0-9.]+" /var/www/owncloud/version.php | grep -oE '[0-9.]+$')"
-[[ "$SOURCE_VERSION" == "10.16.7" ]] ||
-    die "Expected Docker production ownCloud 10.16.7, found ${SOURCE_VERSION:-unknown}."
+[[ "$SOURCE_VERSION" == "11.1.0" ]] ||
+    die "Expected Docker production ownCloud 11.1.0, found ${SOURCE_VERSION:-unknown}."
 SOURCE_STATUS="$(curl -fsS --max-time 20 http://127.0.0.1:8093/status.php)" ||
     die "Production ownCloud is not healthy on loopback."
-python3 -c 'import json,sys; s=json.loads(sys.argv[1]); assert s.get("installed") and s.get("version","").startswith("10.16.7") and not s.get("maintenance"), "Production ownCloud is not ready."' \
+python3 -c 'import json,sys; s=json.loads(sys.argv[1]); assert s.get("installed") and s.get("versionstring") == "11.1.0" and not s.get("needsDbUpgrade") and not s.get("maintenance"), "Production ownCloud is not ready."' \
     "$SOURCE_STATUS" || die "Production ownCloud must be installed, upgraded, and out of maintenance mode."
 
 [[ -r "$SSH_KEY" && -r "$KNOWN_HOSTS" ]] ||
@@ -207,7 +240,6 @@ python3 -c 'import json,sys; s=json.loads(sys.argv[1]); assert s.get("installed"
 
 for marker in \
     "$MIRROR_ROOT/.owncloud-mirror-managed" \
-    "$MIRROR_CODE/.owncloud-mirror-managed" \
     "$MIRROR_DATA/.owncloud-mirror-managed"; do
     remote "test -f '$marker'" || die "Required managed mirror marker is missing: $marker"
 done
@@ -218,8 +250,16 @@ read -r REMOTE_RSYNC_MAJOR REMOTE_RSYNC_MINOR <<< "$REMOTE_RSYNC_VERSION"
 [[ "$REMOTE_RSYNC_MAJOR" =~ ^[0-9]+$ ]] && (( REMOTE_RSYNC_MAJOR >= 3 )) ||
     die "mac2016 requires Homebrew rsync 3 or newer."
 
-echo "Building the isolated ownCloud 10.16.7 mirror runtime on mac2016..."
-remote_compose "config --quiet && build --pull owncloud"
+echo "Building the isolated ownCloud 11.1.0 mirror runtime on mac2016..."
+remote_compose "config --quiet"
+remote_compose "build --pull owncloud"
+remote_compose "config --format json" | python3 -c '
+import json,sys
+s=json.load(sys.stdin)["services"]["owncloud"]
+assert any(v["target"] == "/mnt/data/files" and
+    v["source"] == "/Volumes/SamsungT7_2T/ownCloudBackup/owncloud/data"
+    for v in s["volumes"]), "Mirror data mount is inconsistent"
+'
 
 echo "Checking mirror storage and saving its pre-upgrade database..."
 remote "set -e
@@ -235,7 +275,7 @@ remote "set -e
     [ -s '$MIRROR_DB_BACKUP' ]"
 
 echo "Putting the mac2016 standby in maintenance mode."
-remote_compose "exec -T --user www-data owncloud php /var/www/owncloud/occ maintenance:mode --on"
+remote_compose "run --rm --no-deps --user www-data --entrypoint php owncloud /var/www/owncloud/occ maintenance:mode --on"
 remote_compose "stop owncloud"
 
 sync_data
@@ -245,6 +285,8 @@ sync_config
 echo "Enabling maintenance mode for the final consistent production snapshot."
 SOURCE_MAINTENANCE_CHANGED=1
 source_occ maintenance:mode --on
+SOURCE_STOPPED=1
+docker stop --timeout 60 "$SOURCE_WEB_ID"
 sync_data
 sync_apps
 sync_config
@@ -256,7 +298,17 @@ chmod 0600 "$SOURCE_DUMP"
 [[ -s "$SOURCE_DUMP" ]] || die "The production PostgreSQL snapshot is empty."
 
 echo "Production snapshot complete; restoring the live service."
+docker start "$SOURCE_WEB_ID"
+SOURCE_STOPPED=0
+for attempt in {1..60}; do
+    if curl -fsS --max-time 5 http://127.0.0.1:8093/status.php >/dev/null 2>&1; then
+        break
+    fi
+    sleep 2
+done
 source_occ maintenance:mode --off
+wait_source_normal ||
+    die "Production recovery was not confirmed."
 SOURCE_MAINTENANCE_CHANGED=0
 
 MIRROR_CODE_IMAGE_ID="$(remote "cat '$MIRROR_CODE_SOURCE_IMAGE' 2>/dev/null || true")"
@@ -282,18 +334,27 @@ cat "$SOURCE_DUMP" |
 echo "Generating mirror-only config and starting ownCloud in standby maintenance mode..."
 remote_compose "run --rm --no-deps --user www-data owncloud php /usr/local/bin/prepare-owncloud-mirror-config"
 remote_compose "up -d --force-recreate owncloud"
-
-MIRROR_STATUS="$(remote_compose "exec -T --user www-data owncloud php /var/www/owncloud/occ status --output=json")"
-python3 -c 'import json,sys; s=json.loads(sys.argv[1]); assert s.get("installed") and s.get("version","").startswith("10.16.7") and s.get("maintenance"), "Mirror must be installed as 10.16.7 and remain in standby maintenance mode."' \
-    "$MIRROR_STATUS" || die "The synchronized mac2016 ownCloud did not pass its standby status check."
+remote_compose "exec -T --user www-data owncloud php /var/www/owncloud/occ maintenance:mode --off"
+MIRROR_READY=0
+for attempt in {1..30}; do
+    if remote "curl --noproxy '*' -fsS --max-time 10 \
+        --resolve www16.mxtracks.info:9443:127.0.0.1 \
+        https://www16.mxtracks.info:9443/owncloud/status.php" |
+        python3 -c 'import json,sys; s=json.load(sys.stdin); assert s.get("installed") and s.get("versionstring") == "11.1.0" and not s.get("maintenance") and not s.get("needsDbUpgrade")'; then
+        MIRROR_READY=1
+        break
+    fi
+    sleep 2
+done
+(( MIRROR_READY )) || die "Synchronized mirror did not become ready on 11.1.0."
 remote_compose "exec -T apache apache2ctl -t"
 remote "set -e
     printf '%s\n' '$SOURCE_IMAGE_ID' > '$MIRROR_CODE_SOURCE_IMAGE.tmp'
     chmod 0600 '$MIRROR_CODE_SOURCE_IMAGE.tmp'
     mv '$MIRROR_CODE_SOURCE_IMAGE.tmp' '$MIRROR_CODE_SOURCE_IMAGE'"
 
-echo "OwnCloud 10.16.7 files, apps, config, and PostgreSQL are synchronized to mac2016."
-echo "The mirror remains in maintenance mode and is not accepting writes; disable maintenance only during failover."
+echo "OwnCloud 11.1.0 files, apps, config, and PostgreSQL are synchronized to mac2016."
+echo "The mirror is reachable again. Independent mirror writes will be overwritten by the next sync."
 echo "Synchronized production image: $SOURCE_IMAGE_ID"
 echo "Pre-upgrade mirror database backup: $MIRROR_DB_BACKUP"
 echo "Last production database snapshot: $SOURCE_DUMP"

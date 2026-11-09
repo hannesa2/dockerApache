@@ -55,7 +55,7 @@ $iterator = new RecursiveIteratorIterator(
     new RecursiveDirectoryIterator($sourceConfigDir, FilesystemIterator::SKIP_DOTS)
 );
 foreach ($iterator as $entry) {
-    if (!$entry->isFile() || in_array($entry->getFilename(), ['config.php', '.owncloud-mirror-managed'], true)) {
+    if (!$entry->isFile() || in_array($entry->getFilename(), ['config.php', 'overwrite.config.php', '.owncloud-mirror-managed'], true)) {
         continue;
     }
 
@@ -77,9 +77,14 @@ $CONFIG['dbname'] = $databaseName;
 $CONFIG['dbuser'] = $databaseUser;
 $CONFIG['dbpassword'] = $databasePassword;
 $CONFIG['datadirectory'] = '/mnt/data/files';
+$CONFIG['apps_paths'] = [
+    ['path' => '/var/www/owncloud/apps', 'url' => '/apps', 'writable' => false],
+    ['path' => '/var/www/owncloud/custom', 'url' => '/custom', 'writable' => true],
+];
 $CONFIG['trusted_domains'] = [
     'www16.mxtracks.info',
     'www16.mxtracks.info:8443',
+    'www16.mxtracks.info:9443',
     'www.mxtracks.info',
 ];
 $CONFIG['overwrite.cli.url'] = 'https://' . $publicHost . '/owncloud';
@@ -88,6 +93,7 @@ $CONFIG['overwriteprotocol'] = 'https';
 $CONFIG['overwritewebroot'] = '/owncloud';
 $CONFIG['htaccess.RewriteBase'] = '/owncloud';
 $CONFIG['memcache.local'] = '\\OC\\Memcache\\APCu';
+$CONFIG['memcache.distributed'] = '\\OC\\Memcache\\APCu';
 $CONFIG['memcache.locking'] = '\\OC\\Memcache\\APCu';
 $CONFIG['filelocking.enabled'] = true;
 unset($CONFIG['redis']);

@@ -354,6 +354,29 @@ GitLab login-page checks allow 30 seconds on both hosts, compared with 8
 seconds for other HTTP checks. This still checks the real login route; a
 healthy container alone does not prove the web application is available.
 
+Both availability emails include a Latitude sync-job overview: last start,
+finish, result, last successful completion, and the next expected run from
+enabled entries in the `hannes` crontab and `/etc/cron.d`. Expected times use
+Latitude's timezone and assume the host and cron are running. Unscheduled jobs
+(including ownCloud when no schedule is installed) are explicitly identified.
+Missing historical timestamps are reported as unknown, not guessed from log
+modification times. Job timing does not add hourly emails: unchanged
+availability still suppresses notifications.
+
+Install timestamp recording directly on Latitude:
+
+```bash
+sudo bash monitoring/install-sync-job-status.sh
+```
+
+The existing job-email wrapper writes atomic, credential-free status records
+under `/home/hannes/.local/state/sync-job-notify/status/`. The installer also
+wraps the existing Nextcloud cron command without changing its schedule.
+Existing PostgreSQL, GitLab, Apache and MXServer wrapper jobs begin recording
+on their next execution; no jobs are run by the installer. Both monitors use
+`/home/hannes/bin/sync-job-report.py` on Latitude; the mac2016 monitor retrieves
+the report over SSH and explicitly reports when Latitude cannot be reached.
+
 The manually deployed Latitude GitLab can be recreated with bounded Docker
 logs using `python3 monitoring/recreate-gitlab-logrotation.py --apply`, as a
 user with Docker socket access, while `gitlab` is stopped. The helper preserves

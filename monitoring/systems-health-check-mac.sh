@@ -269,6 +269,11 @@ if [[ -n "$remote_output" ]]; then
     done <<< "$remote_output"
 fi
 
+sync_report="$(ssh -o BatchMode=yes -o ConnectTimeout=10 \
+    -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+    -o StrictHostKeyChecking=yes "$LATITUDE_HOST" \
+    'python3 /home/hannes/bin/sync-job-report.py' 2>&1)" ||
+    sync_report="ERROR: Latitude sync status unavailable: $sync_report"
 grep '^FAIL|' "$checks_file" | sort > "$current_failures"
 if [[ -f "$STATE_FILE" ]]; then
     cp "$STATE_FILE" "$previous_file"
@@ -309,6 +314,7 @@ if [[ ! -f "$STATE_FILE" || -s "$new_failures" || -s "$resolved_failures" ]]; th
         else
             printf 'All monitored checks are passing.\n'
         fi
+        printf '\n%s\n' "$sync_report"
         printf '\nFull check results:\n'
         cat "$checks_file"
     } | "$MAIL_BIN" -s "$subject" "$RECIPIENT" || {

@@ -14,6 +14,11 @@ output_file="$(mktemp)"
 trap 'rm -f "$output_file"' EXIT
 
 started_at="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+reporter="${SYNC_JOB_REPORTER:-/home/hannes/bin/sync-job-report.py}"
+python3 "$reporter" --record "$job_name" RUNNING "$started_at" "" || {
+    echo "ERROR: Could not record sync start." >&2
+    exit 75
+}
 if "$@" >"$output_file" 2>&1; then
     job_status=0
 else
@@ -31,6 +36,10 @@ else
     result="FAILED (exit $job_status)"
     excerpt_lines=120
 fi
+python3 "$reporter" --record "$job_name" "$result" "$started_at" "$finished_at" || {
+    echo "ERROR: Could not record sync completion." >&2
+    exit 75
+}
 
 subject="[Latitude] $result: $job_name"
 {
