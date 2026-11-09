@@ -391,6 +391,14 @@ deployment; changing daemon defaults does not retrofit existing containers.
 
 ### Removing host PHP 7.x on latitude
 
+Latitude's legacy Apache configuration loads `conf.d/` but not all
+`conf-enabled/*.conf` snippets. If Matomo displays PHP source after module
+removal, immediately run `sudo bash monitoring/fix-latitude-php-handler.sh`.
+It explicitly includes the scoped PHP 8.4 handler via the loaded directory,
+tests/reloads Apache, verifies execution of a temporary PHP probe (removed
+on exit), and rejects Matomo responses containing PHP source. HTTP 200 alone
+is not evidence that PHP executed.
+
 The web applications use PHP 8.4 FPM; the legacy Apache PHP module and CLI
 alternatives still need to be removed separately. After repairing any Apache
 configuration errors, run the preflight and then the apply mode on latitude:
@@ -402,11 +410,12 @@ sudo bash monitoring/remove-host-php7.sh --apply
 
 The helper routes the mxdocs web root through PHP 8.4 FPM, disables enabled
 PHP 7 Apache modules, verifies the Apache config and that Matomo and both
-WordPress endpoints retain their current HTTP responses, then purges installed
+WordPress endpoints retain their current HTTP responses (or mxdocs WordPress
+improves from HTTP 500 to 200), then purges installed
 PHP 7.x packages without `autoremove`. It keeps a root-only record under
 `/root/.local/state/remove-host-php7/`. The mxdocs WordPress endpoint currently
-returns HTTP 500 because of a pre-existing `wp-config.php` syntax error; the
-helper checks that its response does not regress but does not repair it.
+returns HTTP 500 under the old handler; the helper allows recovery to HTTP 200
+but rejects other response changes.
 
 Do not run `--apply` while `sudo apache2ctl -t` fails. An unprivileged test
 can report certificate files as missing simply because it cannot access

@@ -54,7 +54,7 @@ for index in "${!url_labels[@]}"; do
     before_codes+=("$code")
     log "$label baseline HTTP $code."
     if [[ "$label" == "mxdocs WordPress" && "$code" == "500" ]]; then
-        log "The existing mxdocs WordPress syntax error is pre-existing; it is not used as a PHP version gate."
+        log "mxdocs WordPress already returns HTTP 500; recovery to HTTP 200 is allowed."
     fi
 done
 
@@ -90,6 +90,11 @@ done
 
 rollback_apache() {
     a2disconf "$HANDLER_NAME" >/dev/null 2>&1 || true
+    if [[ -f /etc/apache2/conf.d/latitude-php84-mxdocs.conf ]] &&
+        grep -Fxq 'Include /etc/apache2/conf-enabled/latitude-php84-mxdocs.conf' \
+            /etc/apache2/conf.d/latitude-php84-mxdocs.conf; then
+        rm -f -- /etc/apache2/conf.d/latitude-php84-mxdocs.conf
+    fi
     rm -f -- "$HANDLER_AVAILABLE"
     for module in "${php7_modules[@]}"; do
         a2enmod "$module" >/dev/null 2>&1 || true
@@ -122,12 +127,18 @@ if ! systemctl reload apache2; then
     fail "Apache reload failed."
 fi
 
+if ! bash "$(dirname "${BASH_SOURCE[0]}")/fix-latitude-php-handler.sh"; then
+    fail "PHP execution was not verified. Packages were not purged; inspect the handler immediately."
+fi
+
 for index in "${!url_labels[@]}"; do
     IFS='|' read -r label host path expected <<< "${url_labels[$index]}"
     code="$(curl --noproxy '*' --silent --insecure --output /dev/null --write-out '%{http_code}' \
         --connect-timeout 3 --max-time 20 --resolve "$host:443:127.0.0.1" \
         "https://$host$path")" || code="000"
-    if [[ "$code" != "${before_codes[$index]}" ]]; then
+    if [[ "$code" != "${before_codes[$index]}" &&
+        ! ( "$label" == "mxdocs WordPress" &&
+            "${before_codes[$index]}" == "500" && "$code" == "200" ) ]]; then
         rollback_apache
         fail "$label changed from HTTP ${before_codes[$index]} to $code; PHP packages were not purged."
     fi
@@ -157,4 +168,3 @@ apache2ctl -t
 log "Host PHP 7.x packages removed. PHP CLI and web FPM use PHP 8.4."
 log "PHP 8.4 migration metadata: $BACKUP"
 log "The old native ownCloud rollback tree remains on disk but no longer runs; production is Dockerized."
-log "The mxdocs WordPress endpoint remains HTTP 500 because its wp-config.php has a PHP syntax error; this pre-existed the handler switch."
