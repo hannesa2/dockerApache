@@ -219,6 +219,7 @@ SQL"
     log "==> 3. Rsyncing web root source → mirror ..."
     remote "mkdir -p '$MIRROR_DOCROOT'"
     rsync -av --delete \
+        --exclude='/piwik/' \
         -e "ssh -p $MIRROR_SSH_PORT" \
         --exclude='.git/' \
         --exclude='*/node_modules/' \
@@ -247,7 +248,7 @@ SQL"
         log "    Source domain: '${SRC_DOMAIN}'"
         # Targets: *.html, *.htm, *.php, *.conf, *.htaccess, *.js, *.css, *.txt, *.xml
         # Uses grep -rl to find only files that actually contain the string (fast).
-        remote "find '${MIRROR_DOCROOT}' -type f \( \
+        remote "find '${MIRROR_DOCROOT}' -path '${MIRROR_DOCROOT}/piwik' -prune -o -type f \( \
             -name '*.html' -o -name '*.htm' -o -name '*.php' \
             -o -name '*.conf' -o -name '.htaccess' \
             -o -name '*.js'  -o -name '*.css' \
@@ -439,4 +440,3 @@ log "  Cron (nightly sync from latitude):"
 log "  0 3 * * * $(realpath "$0") >> /var/log/apache-mirror-\$(date +\\%Y\\%m\\%d).log 2>&1"
 
 remote "rm -f /tmp/wp-config-patch.py" || true
-

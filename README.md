@@ -295,16 +295,45 @@ Compose; this setup does not change the FRITZ!Box port-forwarding rules.
 
 ### Matomo/Piwik mirror
 
-The existing Matomo 4.14.1 installation under `mxdocs/piwik` is copied from
-latitude into the `www16` web root. It is served directly by the existing
+Matomo under `mxdocs/piwik` is served directly by the existing
 Apache/PHP container at `https://www16.mxtracks.info:8443/piwik/`, including
-the tracking endpoint `piwik.php`. Its initial 311-table database snapshot is
-imported into the dedicated `matomo_mirror` schema on the Apache MySQL
-container. After that initial copy the database runs independently; mirror
-tracking requests are not replicated back to latitude or overwritten by a
-scheduled database import. The database password and copied `config.ini.php`
-are private runtime data under `/Volumes/SamsungT5_1T/apache/`, never commit
-them.
+the tracking endpoint `piwik.php`. `monitoring/sync-matomo.py` copies application
+code and a consistent `piwik_db` snapshot from the **native production**
+installation on Latitude, not the outdated Docker copy. The mirror retains its
+own database credentials (`db` / `matomo_mirror`) and trusted hostnames.
+Shipped configuration defaults (`config/global.ini.php` and related files) are
+updated with the application code; only the private `config.ini.php*` files are
+excluded from that copy. The defaults checksum is verified before reopening
+the mirror.
+The WordPress sync excludes `/piwik` from file copying and URL rewriting.
+
+On Latitude, install the daily **04:45** sync and availability-mail reporting:
+
+```bash
+sudo bash monitoring/install-latitude-matomo-sync.sh
+```
+
+The installer requires a successful initial sync before enabling cron (a success
+within the preceding 24 hours is reused). Run manually as `hannes` on Latitude:
+
+```bash
+/usr/local/sbin/run-sync-with-email "Matomo mirror sync" \
+  /usr/bin/python3 /home/hannes/git/dockerApache/monitoring/sync-matomo.py --apply
+```
+
+Without `--apply`, only preflight checks run. Production is never stopped or
+modified. Mirror `/piwik` returns HTTP 403 while its code/database are replaced;
+on failure it remains blocked rather than serving an inconsistent installation.
+Previous mirror database/config snapshots are retained in
+`~/.local/state/matomo-mirror/pre-sync-*` on mac2016. Review and remove obsolete
+snapshots manually as needed. Before retrying a failed replacement, inspect the
+error and backup and remove only the sync-created root `piwik/.htaccess`
+(`Require all denied`); do not remove Matomo's subdirectory access controls.
+Mirror-only tracking and configuration changes are overwritten on the next sync,
+never replicated back. Runtime credentials and backups are private; never commit
+them. Current paths default to `/srv/www/vhosts/mxdocs/piwik` on Latitude and
+`/Volumes/SamsungT5_1T/apache/www/mxdocs/piwik` on mac2016; the script accepts
+`MATOMO_SOURCE_DIR` and `MATOMO_MIRROR_DIR` overrides.
 
 On latitude, native Apache serves the primary Matomo installation from
 `/srv/www/vhosts/mxdocs/piwik`. PHP 8.4-FPM is enabled only for PHP URLs below

@@ -1,6 +1,7 @@
 .idea
 data
 .env
+__pycache__
 
 # Migration / sync script outputs – generated at runtime, not source files
 #apache/native-proxy-*.conf

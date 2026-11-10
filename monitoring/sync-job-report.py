@@ -19,6 +19,7 @@ JOBS = {
     "MXServer mirror sync": "mxserver-mirror-sync",
     "Nextcloud mirror sync": "nextcloud/sync-to-mirror.sh",
     "ownCloud mirror sync": "owncloud-mirror-sync",
+    "Matomo mirror sync": "sync-matomo.py",
 }
 
 
