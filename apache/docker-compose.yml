@@ -70,8 +70,8 @@ services:
     restart: unless-stopped
     user: "${GITHUB_ARTIFACTS_UID:-501}:${GITHUB_ARTIFACTS_GID:-20}"
     volumes:
-      - ${GITHUB_ARTIFACTS_DATA_DIR:-/Volumes/SamsungT5_1T/githubArtifactsPy}/files:/app/files
-      - ${GITHUB_ARTIFACTS_DATA_DIR:-/Volumes/SamsungT5_1T/githubArtifactsPy}/parameter.yml:/app/parameter.yml:ro
+      - ${GITHUB_ARTIFACTS_DATA_DIR:-${HOME}/server/githubArtifactsPy}/files:/app/files
+      - ${GITHUB_ARTIFACTS_DATA_DIR:-${HOME}/server/githubArtifactsPy}/parameter.yml:/app/parameter.yml:ro
     expose:
       - "5000"
     healthcheck:

@@ -18,15 +18,15 @@ if [[ ! "$backup_id" =~ ^git16dr_[0-9]{8}T[0-9]{6}Z_19\.4\.1$ ]]; then
     exit 64
 fi
 
-backup_root="/Volumes/SamsungT5_1T/gitlab/backups"
+backup_root="${GITLAB_BACKUP_DIR:-$HOME/server/gitlab/backups}"
 if [ ! -d "$backup_root" ]; then
-    echo "Backup destination is not mounted: $backup_root" >&2
+    echo "Backup destination is unavailable: $backup_root" >&2
     exit 69
 fi
 
 free_kb="$(/bin/df -Pk "$backup_root" | /usr/bin/awk 'NR == 2 {print $4}')"
-if [ -z "$free_kb" ] || [ "$free_kb" -lt $((200 * 1024 * 1024)) ]; then
-    echo "Refusing backup transfer: less than 200 GiB would remain available" >&2
+if [ -z "$free_kb" ] || [ "$free_kb" -lt $((50 * 1024 * 1024)) ]; then
+    echo "Refusing backup transfer: less than 50 GiB is available" >&2
     exit 70
 fi
 

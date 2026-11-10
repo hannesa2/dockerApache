@@ -112,3 +112,9 @@ if (!rename($tmpConfig, $runtimeConfigDir . '/config.php')) {
     fwrite(STDERR, "Could not atomically install the mirror ownCloud config.\n");
     exit(1);
 }
+
+passthru(escapeshellarg(PHP_BINARY) . ' /var/www/owncloud/occ maintenance:update:htaccess', $status);
+if ($status !== 0) {
+    fwrite(STDERR, "Could not regenerate ownCloud rewrite rules for the mirror subdirectory.\n");
+    exit($status);
+}

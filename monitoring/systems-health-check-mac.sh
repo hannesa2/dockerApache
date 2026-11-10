@@ -120,6 +120,19 @@ else
     record FAIL "mac2016 Samsung T7" "not mounted at /Volumes/SamsungT7_2T"
 fi
 
+server_root="$HOME/server"
+if [[ -d "$server_root/apache/mysql" && -d "$server_root/nextcloud/postgres" &&
+      -d "$server_root/gitlab/data" && -d "$server_root/githubArtifactsPy/files" ]]; then
+    free_kb="$(df -Pk "$server_root" | awk 'NR == 2 {print $4}')"
+    if [[ "$free_kb" =~ ^[0-9]+$ ]] && (( free_kb >= 50 * 1024 * 1024 )); then
+        record OK "mac2016 server storage" "$server_root available; at least 50 GiB free"
+    else
+        record FAIL "mac2016 server storage" "$server_root has less than 50 GiB free or capacity is unknown"
+    fi
+else
+    record FAIL "mac2016 server storage" "expected service data is missing under $server_root"
+fi
+
 if nc -z -w 3 127.0.0.1 22 >/dev/null 2>&1; then
     record OK "mac2016 SSH service" "listening on port 22"
 else
@@ -148,8 +161,8 @@ check_http "mac2016 Apache" "http://127.0.0.1:9080/"
 check_http "mac2016 Nextcloud" "http://127.0.0.1:8082/status.php"
 check_http "mac2016 ownCloud" "https://www16.mxtracks.info:9443/owncloud/status.php" \
     "www16.mxtracks.info:9443:127.0.0.1"
-check_http "mac2016 GitLab mirror" "https://git16.mxtracks.info:9443/users/sign_in" \
-    "git16.mxtracks.info:9443:127.0.0.1" 30
+check_http "mac2016 GitLab mirror" "https://git16.mxtracks.info/users/sign_in" \
+    "git16.mxtracks.info:443:127.0.0.1" 30
 check_http "mac2016 MXServer" "https://www16.mxtracks.info:9433/backend/MXServer/rest/version" \
     "www16.mxtracks.info:9433:127.0.0.1"
 
@@ -157,10 +170,10 @@ owncloud_status="$(curl --silent --insecure --fail --connect-timeout 3 --max-tim
     --resolve "www16.mxtracks.info:9443:127.0.0.1" \
     "https://www16.mxtracks.info:9443/owncloud/status.php" 2>/dev/null)" || owncloud_status=""
 if [[ -n "$owncloud_status" ]] && printf '%s' "$owncloud_status" | \
-    python3 -c 'import json,sys; s=json.load(sys.stdin); sys.exit(0 if s.get("installed") and s.get("version","").startswith("10.16.7") and not s.get("maintenance") else 1)' 2>/dev/null; then
-    record OK "mac2016 ownCloud application" "10.16.7 installed and out of maintenance"
+    python3 -c 'import json,sys; s=json.load(sys.stdin); sys.exit(0 if s.get("installed") and s.get("version","").startswith("11.1.0") and not s.get("maintenance") else 1)' 2>/dev/null; then
+    record OK "mac2016 ownCloud application" "11.1.0 installed and out of maintenance"
 else
-    record FAIL "mac2016 ownCloud application" "not installed, not 10.16.7, or in maintenance mode"
+    record FAIL "mac2016 ownCloud application" "not installed, not 11.1.0, or in maintenance mode"
 fi
 
 remote_output="$(
@@ -240,10 +253,10 @@ check_http "Latitude Home Assistant" "http://127.0.0.1:8123/"
 owncloud_status="$(curl --silent --fail --connect-timeout 3 --max-time 8 \
     "http://127.0.0.1:8093/status.php" 2>/dev/null)" || owncloud_status=""
 if [[ -n "$owncloud_status" ]] && printf '%s' "$owncloud_status" | \
-    python3 -c 'import json,sys; s=json.load(sys.stdin); sys.exit(0 if s.get("installed") and s.get("version","").startswith("10.16.7") and not s.get("maintenance") else 1)' 2>/dev/null; then
-    printf 'CHECK|OK|Latitude ownCloud application|10.16.7 installed and out of maintenance\n'
+    python3 -c 'import json,sys; s=json.load(sys.stdin); sys.exit(0 if s.get("installed") and s.get("version","").startswith("11.1.0") and not s.get("maintenance") else 1)' 2>/dev/null; then
+    printf 'CHECK|OK|Latitude ownCloud application|11.1.0 installed and out of maintenance\n'
 else
-    printf 'CHECK|FAIL|Latitude ownCloud application|not installed, not 10.16.7, in maintenance, or unreachable on port 8093\n'
+    printf 'CHECK|FAIL|Latitude ownCloud application|not installed, not 11.1.0, in maintenance, or unreachable on port 8093\n'
 fi
 REMOTE
 )" || {

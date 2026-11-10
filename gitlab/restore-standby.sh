@@ -3,7 +3,11 @@ set -euo pipefail
 
 docker="${DOCKER:-$HOME/.orbstack/bin/docker}"
 compose_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/docker-compose.yml"
-data_root="${GITLAB_DATA_DIR:-/Volumes/SamsungT5_1T/gitlab}"
+compose=("$docker" --context orbstack compose -f "$compose_file")
+if [ -f "${compose_file%/*}/docker-compose.override.yml" ]; then
+    compose+=(-f "${compose_file%/*}/docker-compose.override.yml")
+fi
+data_root="${GITLAB_DATA_DIR:-$HOME/server/gitlab}"
 backup_root="${GITLAB_BACKUP_DIR:-$data_root/backups}"
 restore_marker="$data_root/.standby-restore-in-progress"
 
@@ -45,8 +49,8 @@ for path in "$data_root/config" "$data_root/logs" "$data_root/data"; do
 done
 
 free_kb="$(df -Pk "$data_root" | awk 'NR == 2 {print $4}')"
-if [ -z "$free_kb" ] || [ "$free_kb" -lt $((200 * 1024 * 1024)) ]; then
-    echo "ERROR: Refusing restore with less than 200 GiB of free space." >&2
+if [ -z "$free_kb" ] || [ "$free_kb" -lt $((50 * 1024 * 1024)) ]; then
+    echo "ERROR: Refusing restore with less than 50 GiB of free space." >&2
     exit 1
 fi
 
@@ -57,18 +61,18 @@ if [ ! -e "$restore_marker" ]; then
 fi
 
 echo "Starting the pinned GitLab 19.4.1 standby container..."
-"$docker" --context orbstack compose -f "$compose_file" up -d
+"${compose[@]}" up -d
 
 echo "Preparing GitLab configuration..."
-"$docker" --context orbstack compose -f "$compose_file" \
+"${compose[@]}" \
     exec -T gitlab gitlab-ctl reconfigure
-"$docker" --context orbstack compose -f "$compose_file" \
+"${compose[@]}" \
     exec -T gitlab gitlab-ctl restart
 
 echo "Waiting for GitLab services to initialize..."
 ready=0
 for _ in $(seq 1 180); do
-    if "$docker" --context orbstack compose -f "$compose_file" \
+    if "${compose[@]}" \
         exec -T gitlab gitlab-ctl status >/dev/null 2>&1; then
         ready=1
         break
@@ -81,17 +85,17 @@ if [ "$ready" -ne 1 ]; then
 fi
 
 echo "Stopping GitLab application services before restore..."
-"$docker" --context orbstack compose -f "$compose_file" exec -T gitlab gitlab-ctl stop puma
-"$docker" --context orbstack compose -f "$compose_file" exec -T gitlab gitlab-ctl stop sidekiq
+"${compose[@]}" exec -T gitlab gitlab-ctl stop puma
+"${compose[@]}" exec -T gitlab gitlab-ctl stop sidekiq
 
 echo "Restoring backup $backup_id..."
-printf 'yes\nyes\n' | "$docker" --context orbstack compose -f "$compose_file" exec -i gitlab \
+printf 'yes\nyes\n' | "${compose[@]}" exec -i gitlab \
     gitlab-backup restore "BACKUP=$backup_id"
 
 echo "Restarting GitLab services..."
-"$docker" --context orbstack compose -f "$compose_file" exec -T gitlab gitlab-ctl reconfigure
-"$docker" --context orbstack compose -f "$compose_file" exec -T gitlab gitlab-ctl restart
-"$docker" --context orbstack compose -f "$compose_file" exec -T gitlab gitlab-ctl status
+"${compose[@]}" exec -T gitlab gitlab-ctl reconfigure
+"${compose[@]}" exec -T gitlab gitlab-ctl restart
+"${compose[@]}" exec -T gitlab gitlab-ctl status
 
 rm -f "$restore_marker"
 echo "GitLab standby restored from $backup_id."

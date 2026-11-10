@@ -1,6 +1,7 @@
 .idea
 data
 .env
+docker-compose.override.yml
 __pycache__
 
 # Migration / sync script outputs – generated at runtime, not source files

@@ -3,13 +3,12 @@ set -euo pipefail
 
 source_host="latitude"
 source_dir="/daten/githubArtifactsPy"
-data_root="/Volumes/SamsungT5_1T/githubArtifactsPy"
+data_root="${GITHUB_ARTIFACTS_DATA_DIR:-$HOME/server/githubArtifactsPy}"
 target_dir="$data_root/files"
 lock_dir="$data_root/.sync-in-progress"
 
-if ! /sbin/mount | /usr/bin/awk \
-    '$2 == "on" && $3 == "/Volumes/SamsungT5_1T" { mounted = 1 } END { exit !mounted }'; then
-    echo "ERROR: SamsungT5_1T is not mounted; refusing to sync." >&2
+if [ ! -d "$target_dir" ] || [ ! -f "$data_root/parameter.yml" ]; then
+    echo "ERROR: GitHub artifacts data is unavailable at $data_root; refusing to sync." >&2
     exit 1
 fi
 

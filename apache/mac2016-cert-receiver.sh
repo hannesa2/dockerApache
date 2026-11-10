@@ -12,11 +12,8 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         ;;
 esac
 
-if [ "$site" = git16.mxtracks.info ]; then
-    cert_dir="/Volumes/SamsungT5_1T/apache/certs"
-else
-    cert_dir="/Volumes/SamsungT5_1T/apache/certs"
-fi
+data_root="${APACHE_DATA_DIR:-$HOME/server/apache}"
+cert_dir="$data_root/certs"
 staging_dir="$(/usr/bin/mktemp -d "$cert_dir/.incoming.XXXXXX")"
 trap 'rm -rf "$staging_dir"' EXIT
 archive="$staging_dir/certificates.tar"
@@ -53,10 +50,10 @@ done
 
 if [ "$site" = git16.mxtracks.info ] &&
     ! /usr/bin/grep -q 'SSLCertificateFile /etc/apache2/certs/git16.mxtracks.info-fullchain.pem' \
-        /Volumes/SamsungT5_1T/apache/vhosts/git16.mxtracks.info.conf \
+        "$data_root/vhosts/git16.mxtracks.info.conf" \
         2>/dev/null; then
     /bin/cat "$HOME/git/dockerApache/gitlab/apache-git16-https.conf" \
-        >> /Volumes/SamsungT5_1T/apache/vhosts/git16.mxtracks.info.conf
+        >> "$data_root/vhosts/git16.mxtracks.info.conf"
 fi
 
 "$HOME/.orbstack/bin/docker" --context orbstack \

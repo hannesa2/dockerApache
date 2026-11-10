@@ -135,6 +135,18 @@ remote_output="$(
         "$MAC_USER@$MAC_HOST" /bin/bash -s <<'REMOTE'
 export PATH="/Applications/OrbStack.app/Contents/MacOS/xbin:/usr/local/bin:/usr/bin:/bin"
 printf 'HOST|%s\n' "$(hostname)"
+server_root="$HOME/server"
+if [[ -d "$server_root/apache/mysql" && -d "$server_root/nextcloud/postgres" &&
+      -d "$server_root/gitlab/data" && -d "$server_root/githubArtifactsPy/files" ]]; then
+    free_kb="$(df -Pk "$server_root" | awk 'NR == 2 {print $4}')"
+    if [[ "$free_kb" =~ ^[0-9]+$ ]] && (( free_kb >= 50 * 1024 * 1024 )); then
+        printf 'STORAGE|OK|%s available; at least 50 GiB free\n' "$server_root"
+    else
+        printf 'STORAGE|FAIL|%s has less than 50 GiB free or capacity is unknown\n' "$server_root"
+    fi
+else
+    printf 'STORAGE|FAIL|expected service data is missing under %s\n' "$server_root"
+fi
 if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then
     printf 'DOCKER|unavailable\n'
     exit 0
@@ -176,7 +188,7 @@ probe() {
 probe "mac2016 Apache" "http://127.0.0.1:9080/"
 probe "mac2016 Nextcloud" "http://127.0.0.1:8082/status.php"
 probe "mac2016 ownCloud" "https://www16.mxtracks.info:8443/owncloud/status.php" "www16.mxtracks.info:8443:127.0.0.1"
-probe "mac2016 GitLab mirror" "https://git16.mxtracks.info:9443/users/sign_in" "git16.mxtracks.info:9443:127.0.0.1" 30
+probe "mac2016 GitLab mirror" "https://git16.mxtracks.info/users/sign_in" "git16.mxtracks.info:443:127.0.0.1" 30
 probe "mac2016 MXServer" "https://www16.mxtracks.info:9433/backend/MXServer/rest/version" "www16.mxtracks.info:9433:127.0.0.1"
 REMOTE
 )" || {
@@ -188,6 +200,9 @@ if [[ -n "$remote_output" ]]; then
     record OK "mac2016 SSH" "connected to $MAC_HOST"
     while IFS='|' read -r kind name value extra; do
         case "$kind" in
+            STORAGE)
+                record "$name" "mac2016 server storage" "$value"
+                ;;
             HOST)
                 if [[ "$name" == mac2016* ]]; then
                     record OK "mac2016 host identity" "$name"

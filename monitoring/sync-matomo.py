@@ -13,7 +13,7 @@ import tempfile
 import datetime as dt
 
 SOURCE = Path(os.environ.get("MATOMO_SOURCE_DIR", "/srv/www/vhosts/mxdocs/piwik"))
-TARGET = os.environ.get("MATOMO_MIRROR_DIR", "/Volumes/SamsungT5_1T/apache/www/mxdocs/piwik")
+TARGET = os.environ.get("MATOMO_MIRROR_DIR", "/Users/hannes/server/apache/www/mxdocs/piwik")
 STATE = Path.home() / ".local/state/matomo-mirror"
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
        "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "mac2016"]

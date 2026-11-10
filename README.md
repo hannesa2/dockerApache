@@ -68,7 +68,7 @@ sops --encrypt --age "$AGE_RECIPIENT" --input-type dotenv --output-type dotenv \
 sops --encrypt --age "$AGE_RECIPIENT" --input-type dotenv --output-type dotenv \
   nextcloud/.env > private-config/nextcloud.env.enc
 sops --encrypt --age "$AGE_RECIPIENT" --input-type ini --output-type ini \
-  /Volumes/SamsungT5_1T/apache/www/mxdocs/piwik/config/config.ini.php \
+  /Users/hannes/server/apache/www/mxdocs/piwik/config/config.ini.php \
   > private-config/matomo-config.ini.enc
 ```
 
@@ -80,7 +80,7 @@ sops --decrypt --input-type dotenv --output-type dotenv \
   private-config/apache.env.enc > apache/.env
 sops --decrypt --input-type ini --output-type ini \
   private-config/matomo-config.ini.enc \
-  > /Volumes/SamsungT5_1T/apache/www/mxdocs/piwik/config/config.ini.php
+  > /Users/hannes/server/apache/www/mxdocs/piwik/config/config.ini.php
 ```
 
 Für Restic müssen `RESTIC_REPOSITORY` auf ein **anderes** Medium oder einen
@@ -91,7 +91,7 @@ regelmäßig gesichert werden:
 
 ```bash
 restic backup apache/.env nextcloud/.env \
-  /Volumes/SamsungT5_1T/apache/www/mxdocs/piwik/config/config.ini.php \
+  /Users/hannes/server/apache/www/mxdocs/piwik/config/config.ini.php \
   --tag dockerApache-private-config
 restic snapshots
 ```
@@ -176,7 +176,7 @@ The scripts are `apache/letsencrypt-deploy-hook.sh` (installed on latitude as
 `/etc/letsencrypt/renewal-hooks/deploy/mac2016-cert-deploy`) and
 `apache/mac2016-cert-receiver.sh` (installed on macOS as
 `~/bin/mac2016-cert-receiver.sh`). The receiver is specific to this host’s
-OrbStack context, Compose file, and `/Volumes/SamsungT5_1T/apache/certs` data
+OrbStack context, Compose file, and `/Users/hannes/server/apache/certs` data
 directory. Run a Certbot dry-run after changing renewal settings:
 
 ```bash
@@ -191,14 +191,22 @@ of the GitLab instance on `latitude`, pinned to the same GitLab version. On
 mac2016 it has no published host ports; it shares the private `gitlab_proxy`
 Docker network with the Apache container. Apache selects the backend vhost from
 the request hostname and reverse-proxies `git16.mxtracks.info` to GitLab over
-internal HTTP. TLS terminates at Apache on port `9443`; the GitLab container
+internal HTTP. TLS terminates at Apache on port `443`; the GitLab container
 does not manage certificates. Its config, logs and application data live under
-`/Volumes/SamsungT5_1T/gitlab/`. There is currently no `git16.mxtracks.info`
+`/Users/hannes/server/gitlab/`. There is currently no `git16.mxtracks.info`
 certificate; HTTPS will become available after issuance and deployment.
 
 DNS only resolves each hostname to an IP address; Apache routes by the HTTP
 `Host` header and TLS SNI. The router must forward public TCP `9080` to
-mac2016's host port `9080`, and public TCP `9443` to host port `9443`. If
+mac2016's host port `9080` for that legacy HTTP endpoint. GitLab's canonical URL
+is now `https://git16.mxtracks.info/`, intended for home-LAN access. A private
+`apache/docker-compose.override.yml` publishes host TCP `443` to container
+TCP `443`; the existing high-port bindings remain available.
+LAN DNS must resolve `git16.mxtracks.info` to mac2016 (`192.168.178.23` or
+`192.168.178.70`), without returning the public IPv6 address. This DNS/client
+configuration is separate from the server setup; changing the GitLab URL does
+not configure the router's DNS. No public TCP 443 forwarding change is needed
+for LAN-only use. If
 `git16.mxtracks.info:9080` shows macOS's native Apache welcome page, check that
 forwarding target: the request is reaching native port `80` rather than the
 Docker Apache port. No additional public port is needed.
@@ -212,7 +220,7 @@ The source-side job creates a consistent GitLab backup once per day and streams
 it to mac2016 over SSH. The dedicated SSH key can run only
 `~/bin/gitlab-mac-backup-receiver.sh`; the receiver validates the archive,
 keeps the newest backup from each of the two newest months, and refuses a
-transfer if less than 200 GiB would remain free. Daily transfers therefore
+transfer if less than 50 GiB is free before receiving the backup. Daily transfers therefore
 update the current month's retained snapshot rather than accumulating daily
 copies. It stores `gitlab.rb` and
 `gitlab-secrets.json` with each backup. The private key and secret file are
@@ -280,7 +288,7 @@ the private Compose network. The app's WSGI prefix handling preserves its
 subpath URLs. The app has no published host port.
 
 The initial upload files and `parameter.yml` live outside the repository under
-`/Volumes/SamsungT5_1T/githubArtifactsPy/`. The parameter file contains the
+`/Users/hannes/server/githubArtifactsPy/`. The parameter file contains the
 same upload authentication as the latitude service and must remain private.
 Do not commit it. A macOS LaunchAgent runs `github-artifacts/sync-latitude.sh`
 at 03:35 each day. It mirrors files one way from
@@ -294,6 +302,18 @@ is `https://www16.mxtracks.info:8443/github/`. The host listener is added by
 Compose; this setup does not change the FRITZ!Box port-forwarding rules.
 
 ### Matomo/Piwik mirror
+
+On mac2016, Apache, GitLab, GitHub Artifacts and Nextcloud data reside under
+`/Users/hannes/server/{apache,gitlab,githubArtifactsPy,nextcloud}` on internal
+storage. The Samsung T7 paths used by ownCloud and MXServer are unchanged.
+Private `.env` files and `docker-compose.override.yml` files retain the running
+services' credentials and host-specific settings; do not commit them.
+The mac2016 health monitor checks the data directories and a 50 GiB free-space
+reserve. The GitLab backup receiver also requires at least 50 GiB free before
+accepting a new backup.
+The internal filesystem is case-insensitive, so the existing MySQL databases
+were migrated by SQL export/import rather than reusing the case-sensitive
+external disk's MySQL binary data directory.
 
 Matomo under `mxdocs/piwik` is served directly by the existing
 Apache/PHP container at `https://www16.mxtracks.info:8443/piwik/`, including
@@ -332,7 +352,7 @@ error and backup and remove only the sync-created root `piwik/.htaccess`
 Mirror-only tracking and configuration changes are overwritten on the next sync,
 never replicated back. Runtime credentials and backups are private; never commit
 them. Current paths default to `/srv/www/vhosts/mxdocs/piwik` on Latitude and
-`/Volumes/SamsungT5_1T/apache/www/mxdocs/piwik` on mac2016; the script accepts
+`/Users/hannes/server/apache/www/mxdocs/piwik` on mac2016; the script accepts
 `MATOMO_SOURCE_DIR` and `MATOMO_MIRROR_DIR` overrides.
 
 On latitude, native Apache serves the primary Matomo installation from
