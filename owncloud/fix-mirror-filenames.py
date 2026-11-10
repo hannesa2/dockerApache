@@ -6,7 +6,7 @@ from pathlib import Path
 parser = argparse.ArgumentParser()
 parser.add_argument("--apply", action="store_true")
 args = parser.parse_args()
-root = Path("/Volumes/SamsungT7_2T/ownCloudBackup/owncloud/data")
+root = Path("/Volumes/SamsungT5_1T/ownCloudBackup/owncloud/data")
 if not root.is_dir() or root.is_symlink():
     raise SystemExit("Expected the existing mac2016 mirror data directory")
 

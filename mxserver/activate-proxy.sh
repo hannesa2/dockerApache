@@ -5,6 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 APACHE_DIR="$REPO_ROOT/apache"
 ENV_FILE="$APACHE_DIR/.env"
+compose=(docker compose -f "$APACHE_DIR/docker-compose.yml")
+if [[ -f "$APACHE_DIR/docker-compose.override.yml" ]]; then
+    compose+=(-f "$APACHE_DIR/docker-compose.override.yml")
+fi
 
 APACHE_DATA_DIR="$(awk -F= '$1 == "APACHE_DATA_DIR" {sub(/^[^=]*=/, ""); gsub(/^["'\"']|["'\"']$/, ""); value=$0} END {print value}' "$ENV_FILE")"
 APACHE_DATA_DIR="${APACHE_DATA_DIR:-$APACHE_DIR/data}"
@@ -50,9 +54,9 @@ if not inserted:
 path.write_text("\n".join(updated) + "\n")
 PY
 
-docker compose -f "$APACHE_DIR/docker-compose.yml" up -d apache
-docker compose -f "$APACHE_DIR/docker-compose.yml" exec -T apache apache2ctl -t
-docker compose -f "$APACHE_DIR/docker-compose.yml" exec -T apache apache2ctl graceful
+"${compose[@]}" up -d apache
+"${compose[@]}" exec -T apache apache2ctl -t
+"${compose[@]}" exec -T apache apache2ctl graceful
 
 response_file="$(mktemp)"
 trap 'rm -f "$response_file"' EXIT

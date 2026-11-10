@@ -89,7 +89,7 @@ services:
       - owncloud
     restart: unless-stopped
     volumes:
-      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/postgres:/var/lib/postgresql/data
+      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT5_1T/ownCloudBackup/owncloud}/postgres:/var/lib/postgresql/data
       - ../owncloud/init-db.sh:/docker-entrypoint-initdb.d/10-create-owncloud-db.sh:ro
     environment:
       POSTGRES_DB: postgres
@@ -119,11 +119,11 @@ services:
       owncloud-db:
         condition: service_healthy
     volumes:
-      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/owncloud:/var/www/owncloud
-      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/data:/mnt/data/files
-      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/apps:/mnt/data/apps
-      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/source-config:/run/owncloud-source-config:ro
-      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT7_2T/ownCloudBackup/owncloud}/runtime-config:/var/www/owncloud/config
+      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT5_1T/ownCloudBackup/owncloud}/owncloud:/var/www/owncloud
+      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT5_1T/ownCloudBackup/owncloud}/data:/mnt/data/files
+      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT5_1T/ownCloudBackup/owncloud}/apps:/mnt/data/apps
+      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT5_1T/ownCloudBackup/owncloud}/source-config:/run/owncloud-source-config:ro
+      - ${OWNCLOUD_MIRROR_DIR:-/Volumes/SamsungT5_1T/ownCloudBackup/owncloud}/runtime-config:/var/www/owncloud/config
       - ../owncloud/prepare-mirror-config.php:/usr/local/bin/prepare-owncloud-mirror-config:ro
     environment:
       OWNCLOUD_DB_NAME: ${OWNCLOUD_DB_NAME:-owncloud}
@@ -160,7 +160,7 @@ services:
       - mxserver
     restart: unless-stopped
     volumes:
-      - ${MXSERVER_MIRROR_DIR:-/Volumes/SamsungT7_2T/MXServerMirror}/postgres:/var/lib/postgresql/data
+      - ${MXSERVER_MIRROR_DIR:-/Volumes/SamsungT5_1T/MXServerMirror}/postgres:/var/lib/postgresql/data
       - ../../MXServer/script/docker/init-db.sh:/docker-entrypoint-initdb.d/10-mxserver.sh:ro
     environment:
       POSTGRES_DB: postgres
@@ -202,8 +202,8 @@ services:
       mxserver-mail:
         condition: service_started
     volumes:
-      - ${MXSERVER_MIRROR_DIR:-/Volumes/SamsungT7_2T/MXServerMirror}/pictures:/data/mxinfo
-      - ${MXSERVER_MIRROR_DIR:-/Volumes/SamsungT7_2T/MXServerMirror}/config/keyfile:/opt/payara/appserver/glassfish/domains/domain1/config/keyfile:ro
+      - ${MXSERVER_MIRROR_DIR:-/Volumes/SamsungT5_1T/MXServerMirror}/pictures:/data/mxinfo
+      - ${MXSERVER_MIRROR_DIR:-/Volumes/SamsungT5_1T/MXServerMirror}/config/keyfile:/opt/payara/appserver/glassfish/domains/domain1/config/keyfile:ro
     environment:
       MXSERVER_DB_HOST: mxserver-db
       MXSERVER_DB_NAME: ${MXSERVER_DB_NAME:-MXServer}

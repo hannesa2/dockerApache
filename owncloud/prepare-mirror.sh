@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 APACHE_DIR="$REPO_ROOT/apache"
 ENV_FILE="$APACHE_DIR/.env"
-DEFAULT_ROOT="/Volumes/SamsungT7_2T/ownCloudBackup/owncloud"
+DEFAULT_ROOT="/Volumes/SamsungT5_1T/ownCloudBackup/owncloud"
 
 env_value() {
     local key="$1"
@@ -24,8 +24,8 @@ if [[ "$(id -u)" != "$OWNCLOUD_UID" ]]; then
     exit 1
 fi
 
-if ! /sbin/mount | /usr/bin/awk '$3 == "/Volumes/SamsungT7_2T" { mounted = 1 } END { exit !mounted }'; then
-    echo "ERROR: SamsungT7_2T is not mounted; refusing to prepare the mirror." >&2
+if ! /sbin/mount | /usr/bin/awk '$3 == "/Volumes/SamsungT5_1T" { mounted = 1 } END { exit !mounted }'; then
+    echo "ERROR: SamsungT5_1T is not mounted; refusing to prepare the mirror." >&2
     exit 1
 fi
 

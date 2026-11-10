@@ -305,7 +305,12 @@ Compose; this setup does not change the FRITZ!Box port-forwarding rules.
 
 On mac2016, Apache, GitLab, GitHub Artifacts and Nextcloud data reside under
 `/Users/hannes/server/{apache,gitlab,githubArtifactsPy,nextcloud}` on internal
-storage. The Samsung T7 paths used by ownCloud and MXServer are unchanged.
+storage. ownCloud and MXServer data reside on the external Samsung T5 at
+`/Volumes/SamsungT5_1T/ownCloudBackup/owncloud` and
+`/Volumes/SamsungT5_1T/MXServerMirror`. Their installed Latitude sync jobs
+retain the daily 04:00 and 04:30 schedules. After changing these volume paths,
+run `sudo bash monitoring/relocate-t7-sync-paths.sh` on Latitude to update the
+root-owned installed copies as well as the repository scripts.
 Private `.env` files and `docker-compose.override.yml` files retain the running
 services' credentials and host-specific settings; do not commit them.
 The mac2016 health monitor checks the data directories and a 50 GiB free-space

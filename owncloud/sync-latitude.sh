@@ -22,7 +22,7 @@ SOURCE_DB="owncloud-staging-db-1"
 MIRROR_HOST="mac2016"
 MIRROR_USER="hannes"
 MIRROR_REPO="/Users/hannes/git/dockerApache"
-MIRROR_ROOT="/Volumes/SamsungT7_2T/ownCloudBackup/owncloud"
+MIRROR_ROOT="/Volumes/SamsungT5_1T/ownCloudBackup/owncloud"
 MIRROR_CODE="$MIRROR_ROOT/owncloud"
 MIRROR_DATA="$MIRROR_ROOT/data"
 MIRROR_APPS="$MIRROR_ROOT/apps"
@@ -257,13 +257,13 @@ remote_compose "config --format json" | python3 -c '
 import json,sys
 s=json.load(sys.stdin)["services"]["owncloud"]
 assert any(v["target"] == "/mnt/data/files" and
-    v["source"] == "/Volumes/SamsungT7_2T/ownCloudBackup/owncloud/data"
+    v["source"] == "/Volumes/SamsungT5_1T/ownCloudBackup/owncloud/data"
     for v in s["volumes"]), "Mirror data mount is inconsistent"
 '
 
 echo "Checking mirror storage and saving its pre-upgrade database..."
 remote "set -e
-    /sbin/mount | /usr/bin/awk '\$3 == \"/Volumes/SamsungT7_2T\" { mounted = 1 } END { exit !mounted }'
+    /sbin/mount | /usr/bin/awk '\$3 == \"/Volumes/SamsungT5_1T\" { mounted = 1 } END { exit !mounted }'
     mkdir -p '$MIRROR_ROOT/backups' '$MIRROR_APPS'
     chmod 0700 '$MIRROR_ROOT/backups'
     touch '$MIRROR_APPS/.owncloud-mirror-managed'

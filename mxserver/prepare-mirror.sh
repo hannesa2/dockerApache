@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 APACHE_DIR="$REPO_ROOT/apache"
 ENV_FILE="$APACHE_DIR/.env"
-DEFAULT_MIRROR_DIR="/Volumes/SamsungT7_2T/MXServerMirror"
+DEFAULT_MIRROR_DIR="/Volumes/SamsungT5_1T/MXServerMirror"
 
 if [[ ! -f "$ENV_FILE" ]]; then
     echo "ERROR: $ENV_FILE is missing; copy apache/.env.example to apache/.env first." >&2
@@ -15,8 +15,8 @@ if [[ ! -f "$REPO_ROOT/../MXServer/pom.xml" ]]; then
     echo "ERROR: MXServer checkout must be at $REPO_ROOT/../MXServer." >&2
     exit 1
 fi
-if ! /sbin/mount | /usr/bin/awk '$3 == "/Volumes/SamsungT7_2T" { mounted = 1 } END { exit !mounted }'; then
-    echo "ERROR: SamsungT7_2T is not mounted; refusing to prepare the mirror." >&2
+if ! /sbin/mount | /usr/bin/awk '$3 == "/Volumes/SamsungT5_1T" { mounted = 1 } END { exit !mounted }'; then
+    echo "ERROR: SamsungT5_1T is not mounted; refusing to prepare the mirror." >&2
     exit 1
 fi
 

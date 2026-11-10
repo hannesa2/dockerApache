@@ -20,7 +20,7 @@ Representative JPEG/PDF/MOV/MP4 streams and an image thumbnail were verified.
 
 The mirror's pre-upgrade code and database dump, plus a post-upgrade database
 dump, are stored under
-`/Volumes/SamsungT7_2T/ownCloudBackup/owncloud/backups/pre-10.16.7-20261106_074955/`.
+`/Volumes/SamsungT5_1T/ownCloudBackup/owncloud/backups/pre-10.16.7-20261106_074955/`.
 
 ## mac2016 setup
 

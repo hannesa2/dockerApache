@@ -35,7 +35,7 @@ compose config --format json | python3 -c '
 import json,sys
 s=json.load(sys.stdin)["services"]["owncloud"]
 assert any(v["target"] == "/mnt/data/files" and
-    v["source"] == "/Volumes/SamsungT7_2T/ownCloudBackup/owncloud/data"
+    v["source"] == "/Volumes/SamsungT5_1T/ownCloudBackup/owncloud/data"
     for v in s["volumes"]), "Unexpected mirror data mount"
 '
 [[ "$MODE" == "--upgrade" || "$MODE" == "--resume" ]] && (( $# <= 1 )) ||
@@ -58,7 +58,7 @@ with tarfile.open(sys.argv[1]) as archive:
             raise SystemExit("Unsafe Contacts archive")
 PY
 CODE="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/var/www/owncloud"}}{{.Source}}{{end}}{{end}}' apache-owncloud-1)"
-[[ "$CODE" == /Volumes/SamsungT7_2T/ownCloudBackup/owncloud/owncloud ]] ||
+[[ "$CODE" == /Volumes/SamsungT5_1T/ownCloudBackup/owncloud/owncloud ]] ||
     fail "Unexpected mirror code mount."
 [[ ! -L "$CODE" && -f "$CODE/version.php" ]] || fail "Invalid mirror code tree."
 log "Building PHP 8.3 / ownCloud 11.1 image before stopping the mirror."
@@ -89,7 +89,7 @@ compose exec -T owncloud-db sh -c \
     < "$SCRIPT_DIR/repair-test-homes.sql"
 compose up -d --no-deps --pull never --force-recreate owncloud
 [[ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/mnt/data/files"}}{{.Source}}{{end}}{{end}}' apache-owncloud-1)" == \
-    /Volumes/SamsungT7_2T/ownCloudBackup/owncloud/data ]] ||
+    /Volumes/SamsungT5_1T/ownCloudBackup/owncloud/data ]] ||
     fail "Recreated mirror does not have the required user-data mount."
 for attempt in {1..30}; do
     if compose exec -T owncloud test -d /mnt/data/sessions; then
@@ -99,7 +99,7 @@ for attempt in {1..30}; do
 done
 else
 CODE="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/var/www/owncloud"}}{{.Source}}{{end}}{{end}}' apache-owncloud-1)"
-[[ "$CODE" == /Volumes/SamsungT7_2T/ownCloudBackup/owncloud/owncloud ]] ||
+[[ "$CODE" == /Volumes/SamsungT5_1T/ownCloudBackup/owncloud/owncloud ]] ||
     fail "Unexpected mirror code mount."
 grep -q "11.1.0" "$CODE/version.php" || fail "Resume requires already-staged 11.1.0 code."
 CHANGED=1

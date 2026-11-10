@@ -114,10 +114,10 @@ else
     record FAIL "mac2016 OrbStack/Docker" "unavailable"
 fi
 
-if mount | grep -qE ' on /Volumes/SamsungT7_2T( |/)'; then
-    record OK "mac2016 Samsung T7" "mounted"
+if mount | grep -qE ' on /Volumes/SamsungT5_1T( |/)'; then
+    record OK "mac2016 Samsung T5" "mounted"
 else
-    record FAIL "mac2016 Samsung T7" "not mounted at /Volumes/SamsungT7_2T"
+    record FAIL "mac2016 Samsung T5" "not mounted at /Volumes/SamsungT5_1T"
 fi
 
 server_root="$HOME/server"

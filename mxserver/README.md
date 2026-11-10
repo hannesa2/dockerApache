@@ -18,7 +18,7 @@ cp apache/.env.example apache/.env  # only if apache/.env does not exist
 ./mxserver/prepare-mirror.sh
 ```
 
-The default data directory is `/Volumes/SamsungT7_2T/MXServerMirror`. The
+The default data directory is `/Volumes/SamsungT5_1T/MXServerMirror`. The
 script preserves any existing passwords and generates private ones for new
 settings in `apache/.env`. Do not commit that file. `MXSERVER_PAYARA_UID`
 must match the macOS account that owns the picture directory.
