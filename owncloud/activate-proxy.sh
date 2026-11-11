@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 APACHE_DIR="$REPO_ROOT/apache"
 ENV_FILE="$APACHE_DIR/.env"
 
-APACHE_DATA_DIR="$(awk -F= '$1 == "APACHE_DATA_DIR" {sub(/^[^=]*=/, ""); gsub(/^["'\"']|["'\"']$/, ""); value=$0} END {print value}' "$ENV_FILE")"
+APACHE_DATA_DIR="$(awk -F= '$1 == "APACHE_DATA_DIR" {sub(/^[^=]*=/, ""); gsub(/^[\"\047]|[\"\047]$/, ""); value=$0} END {print value}' "$ENV_FILE")"
 APACHE_DATA_DIR="${APACHE_DATA_DIR:-$APACHE_DIR/data}"
 RUNTIME_VHOST="$APACHE_DATA_DIR/vhosts/www16.mxtracks.info.conf"
 

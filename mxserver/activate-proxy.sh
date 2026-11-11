@@ -10,7 +10,7 @@ if [[ -f "$APACHE_DIR/docker-compose.override.yml" ]]; then
     compose+=(-f "$APACHE_DIR/docker-compose.override.yml")
 fi
 
-APACHE_DATA_DIR="$(awk -F= '$1 == "APACHE_DATA_DIR" {sub(/^[^=]*=/, ""); gsub(/^["'\"']|["'\"']$/, ""); value=$0} END {print value}' "$ENV_FILE")"
+APACHE_DATA_DIR="$(awk -F= '$1 == "APACHE_DATA_DIR" {sub(/^[^=]*=/, ""); gsub(/^[\"\047]|[\"\047]$/, ""); value=$0} END {print value}' "$ENV_FILE")"
 APACHE_DATA_DIR="${APACHE_DATA_DIR:-$APACHE_DIR/data}"
 RUNTIME_VHOST="$APACHE_DATA_DIR/vhosts/www16.mxtracks.info.conf"
 

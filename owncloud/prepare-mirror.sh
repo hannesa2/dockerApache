@@ -10,7 +10,7 @@ DEFAULT_ROOT="/Volumes/SamsungT5_1T/ownCloudBackup/owncloud"
 env_value() {
     local key="$1"
     if [[ -f "$ENV_FILE" ]]; then
-        awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); gsub(/^["'\"']|["'\"']$/, ""); value=$0} END {print value}' "$ENV_FILE"
+        awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); gsub(/^[\"\047]|[\"\047]$/, ""); value=$0} END {print value}' "$ENV_FILE"
     fi
 }
 

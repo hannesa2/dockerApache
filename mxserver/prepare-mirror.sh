@@ -59,7 +59,7 @@ path.write_text("\n".join(lines) + "\n")
 os.chmod(path, 0o600)
 PY
 
-MIRROR_DIR="$(awk -F= '$1 == "MXSERVER_MIRROR_DIR" {sub(/^[^=]*=/, ""); gsub(/^["'\"']|["'\"']$/, ""); value=$0} END {print value}' "$ENV_FILE")"
+MIRROR_DIR="$(awk -F= '$1 == "MXSERVER_MIRROR_DIR" {sub(/^[^=]*=/, ""); gsub(/^[\"\047]|[\"\047]$/, ""); value=$0} END {print value}' "$ENV_FILE")"
 MIRROR_DIR="${MIRROR_DIR:-$DEFAULT_MIRROR_DIR}"
 mkdir -p "$MIRROR_DIR/postgres" "$MIRROR_DIR/pictures" "$MIRROR_DIR/config"
 touch "$MIRROR_DIR/.mxserver-mirror-managed" \
