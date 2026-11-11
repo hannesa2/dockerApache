@@ -9,7 +9,6 @@ helper_target="/usr/local/sbin/run-sync-with-email"
 owncloud_job="/usr/local/sbin/owncloud-mirror-sync"
 owncloud_cron="/etc/cron.d/owncloud-mirror-sync"
 postgres_backup="/daten/sicherung.postgresql/sicherung.postgresql.sh"
-gitlab_backup="$owner_home/bin/gitlab-mac-backup.sh"
 state_dir="$owner_home/.local/state/sync-job-notify"
 
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -29,7 +28,7 @@ for command in mail python3 crontab; do
     }
 done
 
-for job in "$owncloud_job" "$gitlab_backup" "$postgres_backup"; do
+for job in "$owncloud_job" "$postgres_backup"; do
     [[ -x "$job" ]] || {
         echo "ERROR: Expected executable scheduled job is missing: $job" >&2
         exit 1
@@ -90,11 +89,6 @@ if result.returncode not in (0, 1):
 
 lines = result.stdout.splitlines()
 jobs = {
-    "/home/hannes/bin/gitlab-mac-backup.sh": (
-        "15 3 * * * /usr/local/sbin/run-sync-with-email "
-        '"GitLab standby backup" /home/hannes/bin/gitlab-mac-backup.sh '
-        ">> /home/hannes/.local/state/gitlab-mac-backup/cron.log 2>&1"
-    ),
     postgres_backup: (
         "15 19 * * * /usr/local/sbin/run-sync-with-email "
         '"PostgreSQL backups" /daten/sicherung.postgresql/sicherung.postgresql.sh '

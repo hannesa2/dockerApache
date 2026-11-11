@@ -216,23 +216,18 @@ The Apache vhost snippets are `gitlab/apache-git16-http.conf` and
 internal GitLab service. Enable the HTTPS vhost after the matching Let's
 Encrypt certificate has been deployed to mac2016.
 
-The source-side job creates a consistent GitLab backup once per day and streams
-it to mac2016 over SSH. The dedicated SSH key can run only
-`~/bin/gitlab-mac-backup-receiver.sh`; the receiver validates the archive,
-keeps the newest backup from each of the two newest months, and refuses a
-transfer if less than 50 GiB is free before receiving the backup. Daily transfers therefore
-update the current month's retained snapshot rather than accumulating daily
-copies. It stores `gitlab.rb` and
-`gitlab-secrets.json` with each backup. The private key and secret file are
-never stored in this repository.
+GitLab backup transfers from Latitude to mac2016 are disabled. The former
+03:15 cron job is removed; mac2016 does not create scheduled GitLab backups,
+and the retained archives under `/Users/hannes/server/gitlab/backups` have
+been removed. The running GitLab instance and its configuration, secrets,
+repositories, and database are unchanged.
 
-This is a daily backup, not continuous replication: the mac2016 copy does not
-receive changes immediately, and any writes made to the standby are independent
-of the production instance. In a disaster, first ensure the `latitude` instance
-cannot return as an active writer, then restore the latest backup on mac2016 and
-route `git16.mxtracks.info` to it. Keep both instances on exactly the same
-GitLab version for backup restoration. The public DNS/reverse-proxy cutover is a
-separate networking step.
+The mac2016 instance is not automatically refreshed from Latitude. Any writes
+on it are independent of production. In a disaster, first ensure the Latitude
+instance cannot return as an active writer before promoting mac2016. Restoring
+with `gitlab/restore-standby.sh` requires separately supplied backup archives
+and secrets, and exactly matching source and destination GitLab versions.
+The public DNS/reverse-proxy cutover is a separate networking step.
 
 `www16`, `dev16` and `git16` all use the same MyFRITZ CNAME target, so use the
 same HTTP-01 standalone flow as the existing `www16` and `dev16` lineages.
