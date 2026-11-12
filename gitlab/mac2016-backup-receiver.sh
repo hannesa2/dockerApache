@@ -2,6 +2,7 @@
 set -euo pipefail
 export LC_ALL=C LANG=C
 umask 077
+export PATH="/Applications/OrbStack.app/Contents/MacOS/xbin:/usr/local/bin:/usr/bin:/bin"
 
 case "${SSH_ORIGINAL_COMMAND:-}" in
     "backup git16dr_"*)
@@ -19,9 +20,82 @@ if [[ ! "$backup_id" =~ ^git16dr_[0-9]{8}T[0-9]{6}Z_19\.4\.1$ ]]; then
 fi
 
 backup_root="${GITLAB_BACKUP_DIR:-$HOME/server/gitlab/backups}"
-if [ ! -d "$backup_root" ]; then
+data_root="${GITLAB_DATA_DIR:-$HOME/server/gitlab}"
+state_dir="$HOME/.local/state/gitlab-mac-sync"
+if [ ! -d "$backup_root" ] || [ -L "$backup_root" ]; then
     echo "Backup destination is unavailable: $backup_root" >&2
     exit 69
+fi
+
+mkdir -p "$state_dir"
+if ! mkdir "$state_dir/lock" 2>/dev/null; then
+    echo "Another GitLab mirror restore is running, or its lock remains: $state_dir/lock" >&2
+    exit 75
+fi
+
+staging_dir=""
+work_dir="$backup_root/.sync"
+container_work="/gitlab-backup-archives/.sync"
+services_stopped=0
+restore_started=0
+work_created=0
+cleanup() {
+    status=$?
+    trap - EXIT
+    if [ "$services_stopped" -eq 1 ]; then
+        if [ "$restore_started" -eq 1 ]; then
+            for service in nginx puma sidekiq; do
+                docker exec gitlab16 gitlab-ctl stop "$service" || status=1
+            done
+            echo "ERROR: GitLab restore failed; nginx, puma and sidekiq remain stopped. Retry the sync; do not serve partially restored data." >&2
+        else
+            secrets_restored=1
+            if docker exec gitlab16 test -f "$container_work/previous-secrets.json"; then
+                if ! docker exec gitlab16 cp "$container_work/previous-secrets.json" /etc/gitlab/gitlab-secrets.json ||
+                    ! docker exec gitlab16 gitlab-ctl reconfigure; then
+                    echo "ERROR: Could not restore the mirror's previous secrets; application services remain stopped." >&2
+                    secrets_restored=0
+                    status=1
+                fi
+            fi
+            if [ "$secrets_restored" -eq 1 ]; then
+                for service in nginx puma sidekiq; do
+                    docker exec gitlab16 gitlab-ctl start "$service" || status=1
+                done
+            fi
+        fi
+    fi
+    if [ "$work_created" -eq 1 ]; then
+        docker exec gitlab16 rm -rf -- "$container_work" || status=1
+    fi
+    if [ -n "$staging_dir" ] && [ -d "$staging_dir" ]; then
+        rm -rf -- "$staging_dir" || status=1
+    fi
+    rmdir "$state_dir/lock" || status=1
+    exit "$status"
+}
+trap cleanup EXIT
+
+if [ "$(docker inspect --format '{{.Config.Image}} {{.State.Running}}' gitlab16)" != "gitlab/gitlab-ce:19.4.1-ce.0 true" ]; then
+    echo "Expected the running GitLab 19.4.1 CE mirror; refusing restore." >&2
+    exit 65
+fi
+mounts="$(docker inspect --format '{{range .Mounts}}{{println .Source .Destination}}{{end}}' gitlab16)"
+for mount in "$backup_root /gitlab-backup-archives" "$data_root/config /etc/gitlab" "$data_root/data /var/opt/gitlab"; do
+    if ! printf '%s\n' "$mounts" | grep -Fxq "$mount"; then
+        echo "GitLab mirror storage is inconsistent; refusing restore." >&2
+        exit 65
+    fi
+done
+if ! docker exec gitlab16 sh -c '
+    if [ -e "$1" ] || [ -L "$1" ]; then
+        [ -d "$1" ] && [ ! -L "$1" ] || exit 1
+        entries="$(find "$1" -mindepth 1 -maxdepth 1 -print)" || exit 1
+        [ -z "$entries" ]
+    fi
+' sh "$container_work"; then
+    echo "Previous temporary restore workspace is not empty: $work_dir; inspect it before retrying." >&2
+    exit 75
 fi
 
 free_kb="$(/bin/df -Pk "$backup_root" | /usr/bin/awk 'NR == 2 {print $4}')"
@@ -31,7 +105,6 @@ if [ -z "$free_kb" ] || [ "$free_kb" -lt $((50 * 1024 * 1024)) ]; then
 fi
 
 staging_dir="$(/usr/bin/mktemp -d "$backup_root/.incoming.XXXXXX")"
-trap 'rm -rf "$staging_dir"' EXIT
 bundle="$staging_dir/bundle.tar"
 backup_file="${backup_id}_gitlab_backup.tar"
 
@@ -59,48 +132,51 @@ fi
 
 /bin/rm -f "$bundle"
 
-destination="$backup_root/$backup_id"
-if [ -e "$destination" ]; then
-    if [ ! -L "$backup_root/$backup_file" ]; then
-        /bin/ln -s "$backup_id/$backup_file" "$backup_root/$backup_file"
+docker exec gitlab16 sh -c 'if [ -d "$1" ]; then rmdir "$1"; fi' sh "$container_work"
+/bin/mv "$staging_dir" "$work_dir"
+staging_dir=""
+work_created=1
+docker exec gitlab16 chmod 0711 /gitlab-backup-archives
+docker exec gitlab16 chown -R git:git "$container_work"
+docker exec gitlab16 chmod 0700 "$container_work"
+docker exec gitlab16 chmod 0600 "$container_work/$backup_file" "$container_work/gitlab-secrets.json"
+
+# Version validation and unpacking finish before stopping the mirror.
+docker exec gitlab16 gitlab-rake gitlab:backup:verify "BACKUP=$backup_id"
+docker exec gitlab16 cp /etc/gitlab/gitlab-secrets.json "$container_work/previous-secrets.json"
+services_stopped=1
+for service in nginx puma sidekiq; do
+    docker exec gitlab16 gitlab-ctl stop "$service"
+done
+docker exec gitlab16 cp "$container_work/gitlab-secrets.json" /etc/gitlab/gitlab-secrets.json
+docker exec gitlab16 gitlab-ctl reconfigure
+for service in nginx puma sidekiq; do
+    docker exec gitlab16 gitlab-ctl stop "$service"
+done
+
+printf '%s\n' "$backup_id" > "$state_dir/restore-in-progress"
+restore_started=1
+docker exec gitlab16 gitlab-backup restore "BACKUP=$backup_id" force=yes
+docker exec gitlab16 gitlab-ctl reconfigure
+docker exec gitlab16 gitlab-ctl restart
+
+ready=0
+for attempt in $(seq 1 120); do
+    if docker exec gitlab16 curl --fail --silent --max-time 10 \
+        -H 'Host: git16.mxtracks.info' http://127.0.0.1/-/readiness >/dev/null; then
+        ready=1
+        break
     fi
-    echo "Backup already received: $backup_id"
-    exit 0
+    sleep 5
+done
+if [ "$ready" -ne 1 ]; then
+    for service in nginx puma sidekiq; do
+        docker exec gitlab16 gitlab-ctl stop "$service"
+    done
+    echo "GitLab did not become ready after restore; inspect its logs." >&2
+    exit 1
 fi
-
-/bin/mv "$staging_dir/gitlab.rb" "$staging_dir/source-gitlab.rb"
-/bin/chmod 600 "$staging_dir/$backup_file" "$staging_dir/source-gitlab.rb" \
-    "$staging_dir/gitlab-secrets.json"
-/bin/mv "$staging_dir" "$destination"
-trap - EXIT
-/bin/ln -s "$backup_id/$backup_file" "$backup_root/$backup_file"
-
-retained_months=0
-last_month=""
-backups_this_month=0
-# Backup identifiers sort newest-first; retain one generation for each of the
-# two newest months, pruning extra runs from those months and all older months.
-while IFS= read -r old_backup; do
-    backup_name="${old_backup##*/}"
-    if [[ ! "$backup_name" =~ ^git16dr_([0-9]{6})[0-9]{2}T[0-9]{6}Z_19\.4\.1$ ]]; then
-        continue
-    fi
-
-    month="${BASH_REMATCH[1]}"
-    if [ "$month" != "$last_month" ]; then
-        retained_months=$((retained_months + 1))
-        last_month="$month"
-        backups_this_month=0
-    fi
-    backups_this_month=$((backups_this_month + 1))
-
-    if [ "$retained_months" -gt 2 ] || [ "$backups_this_month" -gt 1 ]; then
-        /bin/rm -rf -- "$old_backup"
-        backup_file="${backup_name}_gitlab_backup.tar"
-        if [ -L "$backup_root/$backup_file" ]; then
-            /bin/rm -- "$backup_root/$backup_file"
-        fi
-    fi
-done < <(/usr/bin/find "$backup_root" -mindepth 1 -maxdepth 1 -type d -name 'git16dr_*' -print | /usr/bin/sort -r)
-
-echo "Stored GitLab backup $backup_id"
+services_stopped=0
+rm -f "$state_dir/restore-in-progress"
+printf '%s\n' "$backup_id" > "$state_dir/last-restored-id"
+echo "GitLab mirror restored from $backup_id; temporary archive will be removed."

@@ -9,8 +9,8 @@ mkdir -p "$state_dir"
 
 exec 9>"$state_dir/lock"
 if ! flock -n 9; then
-    echo "Another GitLab backup transfer is already running"
-    exit 0
+    echo "Another GitLab mirror sync is already running" >&2
+    exit 75
 fi
 
 if [ -s "$pending_file" ]; then
@@ -40,8 +40,11 @@ docker exec gitlab tar -cf - \
         -o BatchMode=yes \
         -o StrictHostKeyChecking=yes \
         -o UserKnownHostsFile=/home/hannes/.ssh/known_hosts \
+        -o ConnectTimeout=15 \
+        -o ServerAliveInterval=15 \
+        -o ServerAliveCountMax=3 \
         hannes@mac2016 "backup $backup_id"
 
 docker exec gitlab rm -f "/var/opt/gitlab/backups/$backup_file"
 rm -f "$pending_file"
-echo "GitLab backup $backup_id transferred to mac2016"
+echo "GitLab mirror synchronized to mac2016 using temporary snapshot $backup_id"

@@ -66,6 +66,18 @@ echo "Starting the pinned GitLab 19.4.1 standby container..."
 echo "Preparing GitLab configuration..."
 "${compose[@]}" \
     exec -T gitlab gitlab-ctl reconfigure
+container_work="/gitlab-backup-archives/.sync"
+container_archive="$container_work/${backup_id}_gitlab_backup.tar"
+if "${compose[@]}" exec -T gitlab test -e "$container_archive"; then
+    echo "ERROR: Temporary restore archive already exists: $container_archive." >&2
+    exit 1
+fi
+"${compose[@]}" cp "$backup_file" "gitlab:$container_archive"
+trap '"${compose[@]}" exec -T gitlab rm -f "$container_archive"' EXIT
+"${compose[@]}" exec -T gitlab chmod 0711 /gitlab-backup-archives
+"${compose[@]}" exec -T gitlab chown git:git "$container_work" "$container_archive"
+"${compose[@]}" exec -T gitlab chmod 0700 "$container_work"
+"${compose[@]}" exec -T gitlab chmod 0600 "$container_archive"
 "${compose[@]}" \
     exec -T gitlab gitlab-ctl restart
 

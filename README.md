@@ -216,18 +216,32 @@ The Apache vhost snippets are `gitlab/apache-git16-http.conf` and
 internal GitLab service. Enable the HTTPS vhost after the matching Let's
 Encrypt certificate has been deployed to mac2016.
 
-GitLab backup transfers from Latitude to mac2016 are disabled. The former
-03:15 cron job is removed; mac2016 does not create scheduled GitLab backups,
-and the retained archives under `/Users/hannes/server/gitlab/backups` have
-been removed. The running GitLab instance and its configuration, secrets,
-repositories, and database are unchanged.
+The source-side job creates a consistent GitLab backup once per day and streams
+it to mac2016 over SSH. The dedicated SSH key can run only
+`~/bin/gitlab-mac-backup-receiver.sh`; the receiver validates the archive
+and matching GitLab version before automatically restoring the mirror.
+It refuses a transfer if less than 50 GiB is free. Archives are temporary:
+`/Users/hannes/server/gitlab/backups/.sync` holds the restore workspace and
+is removed after each run, including failures. Existing backup directories
+on Latitude are not copied, and mac2016 does not create its own GitLab backups.
+The source retains a pending snapshot only until the mirror confirms success,
+so a failed run can be retried. Private keys and secrets never belong in this
+repository.
 
-The mac2016 instance is not automatically refreshed from Latitude. Any writes
-on it are independent of production. In a disaster, first ensure the Latitude
-instance cannot return as an active writer before promoting mac2016. Restoring
-with `gitlab/restore-standby.sh` requires separately supplied backup archives
-and secrets, and exactly matching source and destination GitLab versions.
-The public DNS/reverse-proxy cutover is a separate networking step.
+This is a daily snapshot sync, not continuous replication. The 03:15 Latitude
+job briefly interrupts GitLab on mac2016 for restoration, replaces its data
+and encryption secrets with the source snapshot, and preserves the mirror's
+own `gitlab.rb` URL/proxy settings. Mirror-only writes are overwritten.
+On a failed restore, the receiver leaves nginx, puma and sidekiq stopped rather
+than serving partially restored data; inspect the logs and retry the sync.
+If the receiver was killed without cleanup, inspect the lock under
+`~/.local/state/gitlab-mac-sync/lock` and `.sync` before removing either.
+The last successfully restored ID is recorded in
+`~/.local/state/gitlab-mac-sync/last-restored-id`.
+In a disaster, isolate Latitude before promoting mac2016. Keep both GitLab
+versions identical. No historical backup archives are retained on mac2016;
+`gitlab/restore-standby.sh` requires separately supplied archives for a manual
+initial restore. Public DNS/reverse-proxy cutover remains a separate step.
 
 `www16`, `dev16` and `git16` all use the same MyFRITZ CNAME target, so use the
 same HTTP-01 standalone flow as the existing `www16` and `dev16` lineages.

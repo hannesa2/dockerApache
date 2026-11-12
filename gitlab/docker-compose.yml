@@ -20,7 +20,7 @@ services:
           'X-Forwarded-Ssl' => 'on'
         }
         letsencrypt['enable'] = false
-        gitlab_rails['backup_path'] = '/gitlab-backup-archives'
+        gitlab_rails['backup_path'] = '/gitlab-backup-archives/.sync'
     volumes:
       - ${GITLAB_DATA_DIR:-${HOME}/server/gitlab}/config:/etc/gitlab
       - ${GITLAB_DATA_DIR:-${HOME}/server/gitlab}/logs:/var/log/gitlab
