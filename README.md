@@ -239,7 +239,13 @@ If the receiver was killed without cleanup, inspect the lock under
 The last successfully restored ID is recorded in
 `~/.local/state/gitlab-mac-sync/last-restored-id`.
 In a disaster, isolate Latitude before promoting mac2016. Keep both GitLab
-versions identical. No historical backup archives are retained on mac2016;
+versions identical. No historical backup archives are retained on mac2016.
+The mirror image is pinned to `19.5.3-ce.0`. New snapshot IDs use the running
+Latitude version; retries keep their original ID, while GitLab checks the
+actual archive metadata for version compatibility, not the filename suffix.
+The sender uses `mac2016.local` (overridable with `MIRROR_HOST`) and verifies
+the existing `mac2016` host-key entry; the short name is not reliably resolved
+on Latitude.
 `gitlab/restore-standby.sh` requires separately supplied archives for a manual
 initial restore. Public DNS/reverse-proxy cutover remains a separate step.
 

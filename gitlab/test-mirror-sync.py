@@ -32,7 +32,7 @@ with (home / "calls").open("a") as log:
     log.write(" ".join(args) + "\n")
 if args[0] == "inspect":
     if ".Config.Image" in args[2]:
-        print("gitlab/gitlab-ce:19.4.1-ce.0 true")
+        print("gitlab/gitlab-ce:" + os.environ.get("MIRROR_VERSION", "19.5.3") + "-ce.0 true")
     else:
         print(f"{root}/backups /gitlab-backup-archives")
         print(f"{root}/config /etc/gitlab")
@@ -41,6 +41,9 @@ if args[0] == "inspect":
 if args[:2] != ["exec", "gitlab16"]:
     raise SystemExit("Unexpected mock Docker command")
 command = args[2:]
+if command == ["cat", "/opt/gitlab/embedded/service/gitlab-rails/VERSION"]:
+    print(os.environ.get("MIRROR_VERSION", "19.5.3"))
+    sys.exit(0)
 command = [value.replace("/gitlab-backup-archives", str(root / "backups"))
            .replace("/etc/gitlab", str(root / "config")) for value in command]
 if command[0] == "gitlab-rake":
@@ -75,7 +78,7 @@ def bundle(valid=True):
 def inner_archive():
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w") as archive:
-        data = b"gitlab_version: 19.4.1\n"
+        data = b"gitlab_version: 19.5.3\n"
         entry = tarfile.TarInfo("backup_information.yml")
         entry.size = len(data)
         archive.addfile(entry, io.BytesIO(data))
@@ -125,6 +128,10 @@ class ReceiverTests(unittest.TestCase):
         result, _, calls = self.run_receiver(valid=False)
         self.assertEqual(result.returncode, 65)
         self.assertNotIn("gitlab-ctl stop", calls)
+
+    def test_other_pinned_mirror_version_is_supported(self):
+        result, _, _ = self.run_receiver(MIRROR_VERSION="19.6.2")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
 
     def test_version_validation_failure_does_not_stop_services(self):
         result, home, calls = self.run_receiver(FAIL_VERIFY="1")

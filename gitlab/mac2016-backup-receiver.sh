@@ -4,6 +4,8 @@ export LC_ALL=C LANG=C
 umask 077
 export PATH="/Applications/OrbStack.app/Contents/MacOS/xbin:/usr/local/bin:/usr/bin:/bin"
 
+trap 'status=$?; printf "ERROR: receiver command failed (status %d) at line %d: %s\n" "$status" "$LINENO" "$BASH_COMMAND" >&2; exit "$status"' ERR
+
 case "${SSH_ORIGINAL_COMMAND:-}" in
     "backup git16dr_"*)
         backup_id="${SSH_ORIGINAL_COMMAND#backup }"
@@ -14,7 +16,7 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         ;;
 esac
 
-if [[ ! "$backup_id" =~ ^git16dr_[0-9]{8}T[0-9]{6}Z_19\.4\.1$ ]]; then
+if [[ ! "$backup_id" =~ ^git16dr_[0-9]{8}T[0-9]{6}Z_[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "Rejected invalid backup identifier" >&2
     exit 64
 fi
@@ -76,8 +78,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ "$(docker inspect --format '{{.Config.Image}} {{.State.Running}}' gitlab16)" != "gitlab/gitlab-ce:19.4.1-ce.0 true" ]; then
-    echo "Expected the running GitLab 19.4.1 CE mirror; refusing restore." >&2
+mirror_version="$(docker exec gitlab16 cat /opt/gitlab/embedded/service/gitlab-rails/VERSION)"
+if [[ ! "$mirror_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+    [ "$(docker inspect --format '{{.Config.Image}} {{.State.Running}}' gitlab16)" != "gitlab/gitlab-ce:$mirror_version-ce.0 true" ]; then
+    echo "Expected a running, version-pinned GitLab CE mirror; refusing restore." >&2
     exit 65
 fi
 mounts="$(docker inspect --format '{{range .Mounts}}{{println .Source .Destination}}{{end}}' gitlab16)"
@@ -146,16 +150,20 @@ docker exec gitlab16 gitlab-rake gitlab:backup:verify "BACKUP=$backup_id"
 docker exec gitlab16 cp /etc/gitlab/gitlab-secrets.json "$container_work/previous-secrets.json"
 services_stopped=1
 for service in nginx puma sidekiq; do
+    echo "Stopping GitLab $service before applying source secrets." >&2
     docker exec gitlab16 gitlab-ctl stop "$service"
 done
 docker exec gitlab16 cp "$container_work/gitlab-secrets.json" /etc/gitlab/gitlab-secrets.json
+echo "Reconfiguring GitLab with source encryption secrets." >&2
 docker exec gitlab16 gitlab-ctl reconfigure
 for service in nginx puma sidekiq; do
+    echo "Stopping GitLab $service before restoring the snapshot." >&2
     docker exec gitlab16 gitlab-ctl stop "$service"
 done
 
 printf '%s\n' "$backup_id" > "$state_dir/restore-in-progress"
 restore_started=1
+echo "Restoring GitLab snapshot $backup_id." >&2
 docker exec gitlab16 gitlab-backup restore "BACKUP=$backup_id" force=yes
 docker exec gitlab16 gitlab-ctl reconfigure
 docker exec gitlab16 gitlab-ctl restart

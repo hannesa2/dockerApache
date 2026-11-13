@@ -5,6 +5,7 @@ umask 077
 
 state_dir="/home/hannes/.local/state/gitlab-mac-backup"
 pending_file="$state_dir/pending-id"
+mirror_host="${MIRROR_HOST:-mac2016.local}"
 mkdir -p "$state_dir"
 
 exec 9>"$state_dir/lock"
@@ -13,14 +14,20 @@ if ! flock -n 9; then
     exit 75
 fi
 
+source_version="$(docker exec gitlab cat /opt/gitlab/embedded/service/gitlab-rails/VERSION)"
+if [[ ! "$source_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Invalid source GitLab version: $source_version" >&2
+    exit 1
+fi
+
 if [ -s "$pending_file" ]; then
     IFS= read -r backup_id < "$pending_file"
-    if [[ ! "$backup_id" =~ ^git16dr_[0-9]{8}T[0-9]{6}Z_19\.4\.1$ ]]; then
+    if [[ ! "$backup_id" =~ ^git16dr_[0-9]{8}T[0-9]{6}Z_[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         echo "Invalid pending backup identifier" >&2
         exit 1
     fi
 else
-    backup_id="git16dr_$(date -u +%Y%m%dT%H%M%SZ)_19.4.1"
+    backup_id="git16dr_$(date -u +%Y%m%dT%H%M%SZ)_$source_version"
     printf '%s\n' "$backup_id" > "$pending_file.tmp"
     mv -f "$pending_file.tmp" "$pending_file"
 fi
@@ -39,11 +46,12 @@ docker exec gitlab tar -cf - \
         -o IdentitiesOnly=yes \
         -o BatchMode=yes \
         -o StrictHostKeyChecking=yes \
+        -o HostKeyAlias=mac2016 \
         -o UserKnownHostsFile=/home/hannes/.ssh/known_hosts \
         -o ConnectTimeout=15 \
         -o ServerAliveInterval=15 \
         -o ServerAliveCountMax=3 \
-        hannes@mac2016 "backup $backup_id"
+        "hannes@$mirror_host" "backup $backup_id"
 
 docker exec gitlab rm -f "/var/opt/gitlab/backups/$backup_file"
 rm -f "$pending_file"

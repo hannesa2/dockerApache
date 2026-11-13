@@ -14,12 +14,12 @@ restore_marker="$data_root/.standby-restore-in-progress"
 backup_id="${1:-}"
 if [ -z "$backup_id" ]; then
     backup_id="$(find "$backup_root" -mindepth 1 -maxdepth 1 -type d \
-        -name 'git16dr_*_19.4.1' -print | sort | tail -n 1)"
+        -name 'git16dr_*' -print | sort | tail -n 1)"
     backup_id="${backup_id##*/}"
 fi
 
-if [[ ! "$backup_id" =~ ^git16dr_[0-9]{8}T[0-9]{6}Z_19\.4\.1$ ]]; then
-    echo "ERROR: No valid GitLab 19.4.1 backup identifier supplied or found." >&2
+if [[ ! "$backup_id" =~ ^git16dr_[0-9]{8}T[0-9]{6}Z_[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "ERROR: No valid GitLab backup identifier supplied or found." >&2
     exit 64
 fi
 
@@ -60,7 +60,7 @@ if [ ! -e "$restore_marker" ]; then
     chmod 600 "$restore_marker"
 fi
 
-echo "Starting the pinned GitLab 19.4.1 standby container..."
+echo "Starting the version-pinned GitLab standby container..."
 "${compose[@]}" up -d
 
 echo "Preparing GitLab configuration..."
