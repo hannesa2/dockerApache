@@ -10,6 +10,10 @@ fi
 
 job_name="$1"
 shift
+route=""
+if [[ "$job_name" == "PostgreSQL backups" ]]; then
+    route="Latitude -> /daten/sicherung.postgresql/dump/"
+fi
 output_file="$(mktemp)"
 trap 'rm -f "$output_file"' EXIT
 
@@ -42,8 +46,14 @@ python3 "$reporter" --record "$job_name" "$result" "$started_at" "$finished_at" 
 }
 
 subject="[Latitude] $result: $job_name"
+if [[ -n "$route" ]]; then
+    subject="$subject ($route)"
+fi
 {
     printf 'Job: %s\n' "$job_name"
+    if [[ -n "$route" ]]; then
+        printf 'Route: %s\n' "$route"
+    fi
     printf 'Result: %s\n' "$result"
     printf 'Host: %s\n' "$(hostname -f 2>/dev/null || hostname)"
     printf 'Started: %s\n' "$started_at"

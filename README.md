@@ -519,6 +519,10 @@ sudo bash monitoring/install-sync-job-status.sh
 The existing job-email wrapper writes atomic, credential-free status records
 under `/home/hannes/.local/state/sync-job-notify/status/`. The installer also
 wraps the existing Nextcloud cron command without changing its schedule.
+PostgreSQL backup emails identify their local destination as
+`Latitude -> /daten/sicherung.postgresql/dump/`; this job does not transfer
+backups to mac2016. Re-run the installer after changing the email wrapper to
+update the installed copy.
 Existing PostgreSQL, GitLab, Apache and MXServer wrapper jobs begin recording
 on their next execution; no jobs are run by the installer. Both monitors use
 `/home/hannes/bin/sync-job-report.py` on Latitude; the mac2016 monitor retrieves
