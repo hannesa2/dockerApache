@@ -367,8 +367,10 @@ on failure it remains blocked rather than serving an inconsistent installation.
 Previous mirror database/config snapshots are retained in
 `~/.local/state/matomo-mirror/pre-sync-*` on mac2016. Review and remove obsolete
 snapshots manually as needed. Before retrying a failed replacement, inspect the
-error and backup and remove only the sync-created root `piwik/.htaccess`
-(`Require all denied`); do not remove Matomo's subdirectory access controls.
+error and backup. The sync reuses an existing root `piwik/.htaccess` only if it
+contains exactly `Require all denied` followed by a newline; other contents and
+symlinks abort the sync. Leave this block in place during retries; it is removed
+only after replacement checks pass. Do not remove Matomo's subdirectory access controls.
 Mirror-only tracking and configuration changes are overwritten on the next sync,
 never replicated back. Runtime credentials and backups are private; never commit
 them. Current paths default to `/srv/www/vhosts/mxdocs/piwik` on Latitude and

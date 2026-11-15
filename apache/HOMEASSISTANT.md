@@ -1,4 +1,28 @@
 # Home Assistant – Reverse Proxy Setup
+## Current deployment (2026-11-14)
+
+Production now runs on **beelink** at `http://beelink:8123/`, with configuration
+under `/home/hannes/homeassistant/config`. Its `homeassistant` container uses
+host networking and `restart: unless-stopped`.
+
+**mac2016** has a stopped snapshot in `/Users/hannes/server/homeassistant/config`.
+Its `homeassistant` container publishes port 8123 and has `restart: no`, so it
+does not start automatically. The snapshot is not continuously synchronized.
+Both hosts currently use Home Assistant **2025.4.2**, pinned to image digest
+`ghcr.io/home-assistant/home-assistant@sha256:205fbf9450ebb5570eb0e4e53e64b1af040bf5725056b14293c659ca4dcd8a05`.
+
+For manual failover, first stop Home Assistant on beelink (or ensure that host is
+offline), then run `docker start homeassistant` on mac2016. Access the standby at
+`http://mac2016:8123/`. macOS container networking and hardware access differ from
+Linux; device discovery, USB and Bluetooth functionality need separate testing.
+Stop the Mac container before restarting production on beelink.
+
+Latitude retains its original configuration and stopped `homeassistant` container
+with `restart: no`. The reverse-proxy instructions below describe the previous
+Latitude deployment; the public proxy has not been switched to beelink.
+
+## Previous Latitude reverse proxy
+
 Exposes the Home Assistant Docker container running on **latitude** at
 `http://localhost:8123` via a public HTTPS domain `homeassistant.mxtracks.info`,
 using the native Apache reverse proxy already present on latitude.

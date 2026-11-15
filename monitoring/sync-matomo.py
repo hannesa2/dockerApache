@@ -75,8 +75,13 @@ def synchronize(apply):
                         '--single-transaction --no-tablespaces matomo_mirror')
            + f" > {backup}/database.sql && chmod 600 {backup}/database.sql")
     # Keep the mirror inaccessible throughout replacement, including on failure.
-    remote(f"test ! -e {TARGET}/.htaccess && "
-           f"printf 'Require all denied\\n' > {TARGET}/.htaccess")
+    access_file = shlex.quote(f"{TARGET}/.htaccess")
+    remote(f"if test -L {access_file}; then "
+           "echo 'ERROR: Mirror root .htaccess is a symlink' >&2; exit 1; "
+           f"elif test -e {access_file}; then "
+           f"printf 'Require all denied\\n' | cmp -s - {access_file} || "
+           "{ echo 'ERROR: Unexpected mirror root .htaccess contents' >&2; exit 1; }; "
+           f"else printf 'Require all denied\\n' > {access_file}; fi")
     blocked = remote(
         "curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' --max-time 30 "
         "-H 'Host: www16.mxtracks.info' http://127.0.0.1:9080/piwik/",
