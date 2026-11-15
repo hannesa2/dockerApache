@@ -45,6 +45,18 @@ Installiere GnuPG (`gpg`) und initialisiere das gemeinsame Skript:
 git submodule update --init buildSrc
 ```
 
+Das Skript benötigt ein aktuelles GnuPG 2.x mit `--pinentry-mode` und
+`--no-symkey-cache`. Ältere MacGPG-Versionen wie 2.0.30 werden nicht
+unterstützt. Auf macOS kann GnuPG über Homebrew installiert werden; falls
+`gpg --version` danach noch die alte Version anzeigt, den `bin`-Ordner des
+Homebrew-GnuPG-Pakets im `PATH` vor die alte Installation setzen:
+
+```bash
+brew install gnupg
+export PATH="$(brew --prefix gnupg)/bin:$PATH"
+gpg --version
+```
+
 Verschlüssele die Dateien nach einer Änderung erneut. Das Skript fragt die
 Passphrase zweimal verdeckt ab und verwendet symmetrisches AES-256 mit
 GnuPG-Integritätsschutz. Eine lange, einzigartige Passphrase muss unabhängig
@@ -63,8 +75,14 @@ und Matomos `config.ini.php`. Einzelne Ziele können gewählt werden:
 MATOMO_CONFIG_PATH=/pfad/zur/config.ini.php ./private/private.sh --decrypt matomo
 ```
 
-Der Standardpfad für Matomo ist
+Der Standardpfad für Matomo ist auf Linux
+`/srv/www/vhosts/mxdocs/piwik/config/config.ini.php` und auf macOS
 `/Users/hannes/server/apache/www/mxdocs/piwik/config/config.ini.php`.
+Nach erfolgreichem Verschlüsseln merken sich Verschlüsselung, Entschlüsselung
+und Prüfung den dafür verwendeten Matomo-Pfad lokal pro Host und Checkout.
+`MATOMO_CONFIG_PATH` hat Vorrang; beim nächsten erfolgreichen Verschlüsseln
+wird der angegebene Pfad als neuer lokaler Standard gespeichert. In einem
+frischen Checkout ohne lokalen Prüfstatus gilt wieder der Plattform-Standard.
 Verschlüsselte Kopien liegen in `private-config/gpg/`; beim Entschlüsseln
 erhalten sie den kurzen Hostnamen vor `.enc`, z. B.
 `apache.env.mac2016.enc`, `nextcloud.env.latitude.enc` und

@@ -98,6 +98,19 @@ class PrivateConfigTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(output.exists())
 
+    def test_old_gpg_reports_missing_option_before_prompt(self):
+        executable = self.bin / "gpg"
+        executable.write_text('#!/bin/sh\n[ "$1" = --dump-options ] || exit 3\n'
+                              'printf "%s\\n" --s2k-count\n')
+        executable.chmod(0o700)
+        source = self.root / "source"
+        source.write_text("data")
+        result = self.run_script("--crypt", source)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("GnuPG is too old", result.stderr)
+        self.assertIn("--no-symkey-cache", result.stderr)
+        self.assertFalse((self.root / "source.enc").exists())
+
     def test_overwrite_requires_confirmation(self):
         source = self.root / "source"
         source.write_text("new")

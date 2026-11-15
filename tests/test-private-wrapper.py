@@ -214,6 +214,56 @@ class PrivateWrapperTest(unittest.TestCase):
         result = check(dict(self.env, TEST_HOST="beelink"))
         self.assertIn("encrypted copy missing", result.stderr)
 
+    def test_matomo_override_persists_for_check_and_restore(self):
+        result = self.run_wrapper("--crypt", "matomo")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        env = dict(self.env)
+        del env["MATOMO_CONFIG_PATH"]
+        self.plain[0].unlink()
+        self.plain[1].unlink()
+        result = subprocess.run(
+            ["python3", str(self.root / "private/check-private.py"), "check"],
+            env=env, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.plain[2].write_text("modified")
+        result = subprocess.run(
+            ["python3", str(self.root / "private/check-private.py"), "check"],
+            env=env, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("matomo: plaintext or encrypted copy changed", result.stderr)
+        result = self.run_wrapper("--decrypt", "matomo", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.plain[2].read_text(), "private configuration 2\n")
+        self.assertEqual((self.root / "matomo/config.ini.php.261115-1120").read_text(),
+                         "modified")
+        result = subprocess.run(
+            ["python3", str(self.root / "private/check-private.py"), "check"],
+            env=env, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        other = self.root / "matomo/other.ini"
+        other.write_text("other")
+        result = subprocess.run(
+            ["python3", str(self.root / "private/check-private.py"), "check"],
+            env=dict(env, MATOMO_CONFIG_PATH=str(other)), capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("matomo: plaintext or encrypted copy changed", result.stderr)
+
+    def test_invalid_matomo_record_is_reported(self):
+        result = self.run_wrapper("--crypt", "matomo")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = self.root / ".git/private-config-monitor"
+        record = next(state.glob("*.json"))
+        record.write_text('{"plain_path": "relative", "cipher_path": "invalid"}')
+        env = dict(self.env)
+        del env["MATOMO_CONFIG_PATH"]
+        result = self.run_wrapper("--decrypt", "matomo", env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid Matomo monitoring record", result.stderr)
+
     def test_git_shell_notice_for_selected_commands(self):
         result = self.run_wrapper("--crypt", "apache")
         self.assertEqual(result.returncode, 0, result.stderr)

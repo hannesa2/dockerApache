@@ -46,6 +46,25 @@ def digest(path, key):
     return mac.hexdigest()
 
 
+def matomo_path(directory, cipher):
+    override = os.environ.get("MATOMO_CONFIG_PATH")
+    if override:
+        return Path(override)
+    if (directory / "key").exists():
+        key = key_for(directory)
+        name = hmac.new(key, str(cipher.resolve()).encode(), hashlib.sha256).hexdigest()
+        record_path = directory / (name + ".json")
+        if record_path.exists():
+            record = json.loads(record_path.read_text())
+            path = Path(record["plain_path"])
+            if not path.is_absolute() or record["cipher_path"] != str(cipher.resolve()):
+                raise ValueError(f"Invalid Matomo monitoring record: {record_path}")
+            return path
+    if sys.platform == "darwin":
+        return Path("/Users/hannes/server/apache/www/mxdocs/piwik/config/config.ini.php")
+    return Path("/srv/www/vhosts/mxdocs/piwik/config/config.ini.php")
+
+
 def write_record(directory, key, plain, cipher, expected):
     actual = digest(plain, key)
     if not hmac.compare_digest(actual, expected):
@@ -96,19 +115,21 @@ def main():
     elif len(sys.argv) == 5 and sys.argv[1] == "record":
         write_record(directory, key_for(directory), Path(sys.argv[2]).resolve(),
                      Path(sys.argv[3]).resolve(), sys.argv[4])
-    elif len(sys.argv) == 2 and sys.argv[1] == "check":
+    elif len(sys.argv) == 2 and sys.argv[1] in ("check", "matomo-path"):
         host = subprocess.run(["hostname", "-s"], check=True, text=True,
                               capture_output=True).stdout.strip()
         if not host or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for c in host) or not host[0].isalnum():
             raise ValueError("Invalid short hostname")
-        key = key_for(directory) if (directory / "key").exists() else None
         cipher_dir = ROOT / "private-config/gpg"
+        matomo_cipher = cipher_dir / f"matomo-config.ini.{host}.enc"
+        if sys.argv[1] == "matomo-path":
+            print(matomo_path(directory, matomo_cipher))
+            return 0
+        key = key_for(directory) if (directory / "key").exists() else None
         entries = [
             ("apache", ROOT / "apache/.env", cipher_dir / f"apache.env.{host}.enc"),
             ("nextcloud", ROOT / "nextcloud/.env", cipher_dir / f"nextcloud.env.{host}.enc"),
-            ("matomo", Path(os.environ.get("MATOMO_CONFIG_PATH",
-             "/Users/hannes/server/apache/www/mxdocs/piwik/config/config.ini.php")),
-             cipher_dir / f"matomo-config.ini.{host}.enc"),
+            ("matomo", matomo_path(directory, matomo_cipher), matomo_cipher),
         ]
         warnings = [check_one(directory, key, name, plain.resolve(), cipher.resolve())
                     for name, plain, cipher in entries]
@@ -121,7 +142,7 @@ def main():
                   "and restart the shell (or run unset -f git).", file=sys.stderr)
             return 1
     else:
-        raise ValueError("Usage: check-private.py check | prepare <plain> | record <plain> <cipher> <digest>")
+        raise ValueError("Usage: check-private.py check | matomo-path | prepare <plain> | record <plain> <cipher> <digest>")
     return 0
 
 

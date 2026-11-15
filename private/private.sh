@@ -5,7 +5,6 @@ umask 077
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 HELPER="$ROOT/buildSrc/scripts/decrypt.sh"
 CIPHER_DIR="$ROOT/private-config/gpg"
-MATOMO_CONFIG_PATH="${MATOMO_CONFIG_PATH:-/Users/hannes/server/apache/www/mxdocs/piwik/config/config.ini.php}"
 
 usage() {
   echo "Usage: $0 --crypt|--decrypt [apache|nextcloud|matomo ...]" >&2
@@ -42,7 +41,7 @@ for target in "${targets[@]}"; do
   case "$target" in
     apache) plain="$ROOT/apache/.env"; cipher="$CIPHER_DIR/apache.env" ;;
     nextcloud) plain="$ROOT/nextcloud/.env"; cipher="$CIPHER_DIR/nextcloud.env" ;;
-    matomo) plain="$MATOMO_CONFIG_PATH"; cipher="$CIPHER_DIR/matomo-config.ini" ;;
+    matomo) plain="$(python3 "$ROOT/private/check-private.py" matomo-path)"; cipher="$CIPHER_DIR/matomo-config.ini" ;;
     *) usage ;;
   esac
   cipher="$cipher.$host"
