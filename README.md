@@ -102,6 +102,41 @@ muss `CRYPT_PASS_CONFIRM` denselben Wert enthalten. Bestehende verschlüsselte
 Ziele werden ohne Terminal nicht überschrieben. Umgebungsvariablen können lokal einsehbar
 sein; Passphrasen niemals in Skripte oder Git schreiben.
 
+### Erinnerung bei privaten Änderungen
+
+Nach erfolgreichem Verschlüsseln merkt sich `private.sh` lokal einen mit einem
+zufälligen Schlüssel geschützten Prüfwert für Klartext und Ciphertext. Der
+Schlüssel und die Prüfwerte liegen im lokalen Git-Verzeichnis, nicht im
+Repository. Ohne vorheriges Verschlüsseln auf diesem Checkout ist der Stand
+unbekannt und wird als Warnung gemeldet; fehlende Klartextdateien ohne
+zugehörige Host-Sicherung werden nicht überwacht.
+
+Für Meldungen vor `git status`, `git commit` und `git pull` die Shell-Funktion
+**auf jedem Rechner und für jeden Benutzer**, der Git verwendet, in die
+jeweilige `~/.bashrc` oder `~/.zshrc` eintragen (Pfad anpassen):
+
+```bash
+source "$HOME/git/dockerApache/private/git-notice.sh" "$HOME/git/dockerApache"
+```
+
+Danach eine neue Shell öffnen oder die entsprechende Datei neu einlesen. Die
+Meldung blockiert Git nicht und aktualisiert oder committet nichts automatisch.
+Sie gilt für interaktive Aufrufe über diese Shell-Funktion einschließlich
+`git -C ...`, nicht für IDEs, Skripte, `command git` oder andere Shells. Bei
+Warnungen die genannten Ziele mit `./private/private.sh --crypt <ziel>`
+verschlüsseln und die `.enc`-Dateien selbst committen und pushen.
+Eine manuelle Prüfung ist möglich:
+
+```bash
+python3 private/check-private.py check
+```
+
+Zum Deaktivieren die `source .../private/git-notice.sh`-Zeile aus der
+verwendeten Shell-Konfiguration entfernen (`~/.bashrc`, `~/.zshrc` oder die
+Datei, in die sie eingetragen wurde). Eine neue Shell übernimmt die Änderung;
+in der aktuellen Shell entfernt `unset -f git` die Funktion sofort. Der lokale
+Prüfstatus bleibt dadurch erhalten.
+
 Frühere OpenSSL-CBC-Dateien des buildSrc-Skripts sind nicht kompatibel und
 müssen separat mit der alten Skriptversion entschlüsselt werden. Vor jedem
 Commit prüfen, dass nur Ciphertext hinzugefügt wird.

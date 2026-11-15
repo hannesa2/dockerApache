@@ -25,6 +25,7 @@ fi
   echo "ERROR: Missing executable $HELPER; initialize or update the buildSrc submodule." >&2
   exit 1
 }
+command -v python3 >/dev/null || { echo "ERROR: python3 is required." >&2; exit 1; }
 
 host="$(hostname -s)" || {
   echo "ERROR: Cannot determine the short hostname." >&2
@@ -93,7 +94,10 @@ trap 'unset CRYPT_PASS CRYPT_PASS_CONFIRM' EXIT
 
 for i in "${!plain_paths[@]}"; do
   if [[ "$mode" == --crypt ]]; then
+    fingerprint="$(python3 "$ROOT/private/check-private.py" prepare "${plain_paths[$i]}")"
     "$HELPER" --crypt --output "${cipher_paths[$i]}.enc" "${plain_paths[$i]}"
+    python3 "$ROOT/private/check-private.py" record "${plain_paths[$i]}" \
+      "${cipher_paths[$i]}.enc" "$fingerprint"
   else
     "$HELPER" --output "${plain_paths[$i]}" "${cipher_paths[$i]}"
   fi

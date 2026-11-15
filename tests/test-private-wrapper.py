@@ -16,9 +16,11 @@ class PrivateWrapperTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         for directory in ("private", "buildSrc/scripts", "apache", "nextcloud", "matomo", "gnupg", "bin"):
             (self.root / directory).mkdir(parents=True, mode=0o700)
-        for path in ("private/private.sh", "buildSrc/scripts/decrypt.sh"):
+        for path in ("private/private.sh", "private/check-private.py", "private/check-git.py",
+                     "private/git-notice.sh", "buildSrc/scripts/decrypt.sh"):
             shutil.copy2(SOURCE / path, self.root / path)
             (self.root / path).chmod(0o700)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
         hostname = self.root / "bin/hostname"
         hostname.write_text('#!/bin/sh\n[ "$1" = -s ] || exit 1\nprintf "%s\\n" "$TEST_HOST"\n')
         hostname.chmod(0o700)
@@ -187,6 +189,52 @@ class PrivateWrapperTest(unittest.TestCase):
         result = self.run_wrapper("--crypt", "nextcloud", env=dict(self.env, TEST_HOST="../unsafe"))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Invalid short hostname", result.stderr)
+
+    def test_change_monitor_tracks_each_host_and_cipher(self):
+        result = self.run_wrapper("--crypt", "apache", "nextcloud")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        def check(env=None):
+            return subprocess.run(
+                ["python3", str(self.root / "private/check-private.py"), "check"],
+                env=env or self.env, capture_output=True, text=True,
+            )
+        self.plain[2].unlink()
+        self.assertEqual(check().returncode, 0)
+        self.plain[0].write_text("changed")
+        result = check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("apache: plaintext or encrypted copy changed", result.stderr)
+        self.assertIn("private/git-notice.sh", result.stderr)
+        self.assertIn("private/check-private.py", result.stderr)
+        self.assertIn("unset -f git", result.stderr)
+        self.plain[0].write_text("private configuration 0\n")
+        cipher = self.root / "private-config/gpg/apache.env.mac2016.enc"
+        cipher.write_bytes(cipher.read_bytes() + b"x")
+        self.assertEqual(check().returncode, 1)
+        result = check(dict(self.env, TEST_HOST="beelink"))
+        self.assertIn("encrypted copy missing", result.stderr)
+
+    def test_git_shell_notice_for_selected_commands(self):
+        result = self.run_wrapper("--crypt", "apache")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.plain[0].write_text("changed")
+        shell = (
+            'source "$1/private/git-notice.sh" "$1"; '
+            'git -C "$1" "$2"'
+        )
+        for command in ("status", "commit", "pull"):
+            result = subprocess.run(
+                ["bash", "-c", shell, "test", str(self.root), command],
+                cwd="/", env=self.env, capture_output=True, text=True,
+            )
+            self.assertIn("apache: plaintext or encrypted copy changed", result.stderr)
+            self.assertIn("private/git-notice.sh", result.stderr)
+            self.assertIn("unset -f git", result.stderr)
+        result = subprocess.run(
+            ["bash", "-c", shell, "test", str(self.root), "branch"],
+            cwd="/", env=self.env, capture_output=True, text=True,
+        )
+        self.assertNotIn("WARNING: apache", result.stderr)
 
 
 if __name__ == "__main__":
