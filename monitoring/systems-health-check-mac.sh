@@ -240,9 +240,14 @@ check_http() {
     esac
 }
 
-for unit in apache2 glassfish postgresql@16-main docker; do
+for unit in apache2 glassfish docker; do
     check_unit "$unit"
 done
+if [[ -f /etc/mxserver-postgres-dockerized ]]; then
+    check_container mxserver-postgres-db-1
+else
+    check_unit postgresql@16-main
+fi
 
 for name in \
     apache-apache-1 apache-db-1 gitlab gitlab-runner \

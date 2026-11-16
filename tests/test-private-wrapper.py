@@ -14,7 +14,7 @@ class PrivateWrapperTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        for directory in ("private", "buildSrc/scripts", "apache", "nextcloud", "matomo", "camera-postgres", "gnupg", "bin"):
+        for directory in ("private", "buildSrc/scripts", "apache", "nextcloud", "matomo", "camera-postgres", "mxserver-postgres", "gnupg", "bin"):
             (self.root / directory).mkdir(parents=True, mode=0o700)
         for path in ("private/private.sh", "private/check-private.py", "private/check-git.py",
                      "private/git-notice.sh", "buildSrc/scripts/decrypt.sh"):
@@ -199,6 +199,24 @@ class PrivateWrapperTest(unittest.TestCase):
                                 env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 1)
         self.assertIn("camera-postgres: plaintext or encrypted copy changed", result.stderr)
+
+    def test_mxserver_config_roundtrip_and_monitor(self):
+        config = self.root / "mxserver-postgres/.env"
+        config.write_text("mxserver bootstrap secret\n")
+        result = self.run_wrapper("--crypt", "mxserver-postgres")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / "private-config/gpg/mxserver-postgres.env.mac2016.enc").is_file())
+        config.unlink()
+        result = self.run_wrapper("--decrypt", "mxserver-postgres")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(config.read_text(), "mxserver bootstrap secret\n")
+        for path in self.plain:
+            path.unlink()
+        config.write_text("changed\n")
+        result = subprocess.run(["python3", str(self.root / "private/check-private.py"), "check"],
+                                env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("mxserver-postgres: plaintext or encrypted copy changed", result.stderr)
 
     def test_missing_host_ciphertext_and_invalid_hostname(self):
         result = self.run_wrapper("--crypt", "apache")

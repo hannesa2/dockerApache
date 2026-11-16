@@ -94,8 +94,12 @@ check_http() {
 
 check_unit apache2
 check_unit glassfish
-check_unit postgresql@16-main
 check_unit docker
+if [[ -f /etc/mxserver-postgres-dockerized ]]; then
+    check_container mxserver-postgres-db-1
+else
+    check_unit postgresql@16-main
+fi
 
 latitude_containers=(
     apache-apache-1

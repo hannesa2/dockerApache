@@ -1,0 +1,43 @@
+name: mxserver-postgres
+
+services:
+  db:
+    build: ../camera-postgres
+    image: camera-postgres-db
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${MXSERVER_POSTGRES_BOOTSTRAP_PASSWORD:?Set a private bootstrap password}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=peer"
+      MXSERVER_POSTGRES_PORT: ${MXSERVER_POSTGRES_PORT:-5432}
+      PGPORT: ${MXSERVER_POSTGRES_PORT:-5432}
+      TZ: Europe/Berlin
+    volumes:
+      - ${MXSERVER_POSTGRES_DATA_DIR:?Set the database data directory}:/var/lib/postgresql/data
+      - ${MXSERVER_POSTGRES_TLS_DIR:?Set the TLS directory}:/run/mxserver-tls:ro
+      - ./pg_hba.conf:/etc/postgresql/mxserver-pg_hba.conf:ro
+    command:
+      - postgres
+      - -c
+      - port=${MXSERVER_POSTGRES_PORT:-5432}
+      - -c
+      - listen_addresses=*
+      - -c
+      - hba_file=/etc/postgresql/mxserver-pg_hba.conf
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/run/mxserver-tls/server.crt
+      - -c
+      - ssl_key_file=/run/mxserver-tls/server.key
+      - -c
+      - timezone=Europe/Berlin
+      - -c
+      - datestyle=ISO, DMY
+      - -c
+      - default_text_search_config=pg_catalog.german
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p \"$$MXSERVER_POSTGRES_PORT\" -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 12

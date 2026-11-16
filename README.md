@@ -97,6 +97,9 @@ Für Kamera-PostgreSQL wird `camera-postgres/.env` als
 explizit angegeben werden; der Aufruf ohne Ziele bleibt unverändert. Die
 Änderungsprüfung berücksichtigt es, sobald die `.env` oder eine verschlüsselte
 Kopie auf dem jeweiligen Host existiert.
+Für die vorbereitete MXServer-PostgreSQL-Konfiguration gilt entsprechend
+`./private/private.sh --crypt mxserver-postgres`; der Standardaufruf bleibt
+ebenfalls unverändert.
 
 Bereits vorhandene Dateien ohne Hostname bleiben unverändert und werden nicht
 automatisch verwendet. Sie können nach Prüfung ihrer Herkunft auf den passenden
@@ -646,6 +649,12 @@ The MXServer Java EE application is built from the sibling `MXServer` checkout
 and runs in a Payara 5/Java 8 container on mac2016. Its PostgreSQL 14 database
 and picture files are independent copies synchronized daily from latitude.
 Mirror-generated email is captured privately instead of being delivered.
+Latitude MXServer runs on Docker PostgreSQL 16 at the unchanged port 5432;
+the native cluster is stopped and configured for manual startup only.
+The startup gate and recovery procedure are described in `mxserver/README.md`.
+The native data directory is retained;
+never restart it after Docker might have accepted writes without reconciling
+the data first.
 
 On mac2016, ensure `~/git/MXServer` and `~/git/dockerApache` are sibling
 checkouts, then prepare the runtime:

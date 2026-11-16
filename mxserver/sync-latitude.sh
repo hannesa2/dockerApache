@@ -8,7 +8,20 @@ if [[ "$(id -u)" -ne 0 ]]; then
     exit 1
 fi
 
+SOURCE_KIND="native"
+if [[ -f /etc/mxserver-postgres-dockerized ]]; then
+    SOURCE_KIND="docker"
+fi
+case "${1:-}" in
+    "") ;;
+    --source=docker) SOURCE_KIND="docker"; shift ;;
+    --source=native) SOURCE_KIND="native"; shift ;;
+    *) echo "Usage: $0 [--source=native|--source=docker]" >&2; exit 2 ;;
+esac
+[[ $# -eq 0 ]] || { echo "ERROR: Unexpected arguments." >&2; exit 2; }
+
 SOURCE_DATABASE="MXServer"
+SOURCE_CONTAINER="mxserver-postgres-db-1"
 STAGING_DATABASE="MXServer_staging"
 PREVIOUS_DATABASE="MXServer_previous"
 SOURCE_PICTURES="/srv/postgres/data/mxinfo"
@@ -82,9 +95,15 @@ trap cleanup EXIT
 [[ -d "$SOURCE_PICTURES" ]] || die "Source picture directory is unavailable: $SOURCE_PICTURES"
 [[ -r "$SOURCE_KEYFILE" ]] || die "GlassFish file-realm keyfile is unavailable: $SOURCE_KEYFILE"
 [[ -r "$SSH_KEY" && -r "$KNOWN_HOSTS" ]] || die "Latitude-to-mac2016 SSH key or known_hosts is unavailable."
-command -v pg_dump >/dev/null || die "pg_dump is unavailable."
 command -v rsync >/dev/null || die "rsync is unavailable on latitude."
-command -v runuser >/dev/null || die "runuser is unavailable."
+if [[ "$SOURCE_KIND" == native ]]; then
+    command -v pg_dump >/dev/null || die "pg_dump is unavailable."
+    command -v runuser >/dev/null || die "runuser is unavailable."
+else
+    command -v docker >/dev/null || die "docker is unavailable."
+    [[ "$(docker inspect -f '{{.State.Running}}' "$SOURCE_CONTAINER")" == true ]] ||
+        die "Source PostgreSQL container is not running: $SOURCE_CONTAINER"
+fi
 
 remote "test -f '$MIRROR_ROOT/.mxserver-mirror-managed' &&
         test -f '$MIRROR_PICTURES/.mxserver-mirror-managed' &&
@@ -123,11 +142,12 @@ remote "docker compose -f '$MIRROR_COMPOSE_FILE' --profile mxserver exec -T mxse
     -c 'CREATE DATABASE \"MXServer_staging\" OWNER \"mxserver\"'"
 
 echo "Streaming the MXServer PostgreSQL snapshot to mac2016..."
-runuser -u postgres -- pg_dump \
-    --format=plain \
-    --no-owner \
-    --no-privileges \
-    --dbname="$SOURCE_DATABASE" |
+if [[ "$SOURCE_KIND" == native ]]; then
+    source_dump=(runuser -u postgres -- pg_dump)
+else
+    source_dump=(docker exec --user postgres "$SOURCE_CONTAINER" pg_dump)
+fi
+"${source_dump[@]}" --format=plain --no-owner --no-privileges --dbname="$SOURCE_DATABASE" |
     ssh "${ssh_options[@]}" "$MIRROR_USER@$MIRROR_HOST" \
         "export PATH='/Applications/OrbStack.app/Contents/MacOS/xbin:/usr/local/bin:/usr/bin:/bin'; \
          docker compose -f '$MIRROR_COMPOSE_FILE' --profile mxserver exec -T mxserver-db \

@@ -131,6 +131,7 @@ def main():
             ("nextcloud", ROOT / "nextcloud/.env", cipher_dir / f"nextcloud.env.{host}.enc"),
             ("matomo", matomo_path(directory, matomo_cipher), matomo_cipher),
             ("camera-postgres", ROOT / "camera-postgres/.env", cipher_dir / f"camera-postgres.env.{host}.enc"),
+            ("mxserver-postgres", ROOT / "mxserver-postgres/.env", cipher_dir / f"mxserver-postgres.env.{host}.enc"),
         ]
         warnings = [check_one(directory, key, name, plain.resolve(), cipher.resolve())
                     for name, plain, cipher in entries]
