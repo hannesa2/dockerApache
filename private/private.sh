@@ -7,7 +7,7 @@ HELPER="$ROOT/buildSrc/scripts/decrypt.sh"
 CIPHER_DIR="$ROOT/private-config/gpg"
 
 usage() {
-  echo "Usage: $0 --crypt|--decrypt [apache|nextcloud|matomo ...]" >&2
+  echo "Usage: $0 --crypt|--decrypt [apache|nextcloud|matomo|camera-postgres ...]" >&2
   exit 2
 }
 
@@ -42,6 +42,7 @@ for target in "${targets[@]}"; do
     apache) plain="$ROOT/apache/.env"; cipher="$CIPHER_DIR/apache.env" ;;
     nextcloud) plain="$ROOT/nextcloud/.env"; cipher="$CIPHER_DIR/nextcloud.env" ;;
     matomo) plain="$(python3 "$ROOT/private/check-private.py" matomo-path)"; cipher="$CIPHER_DIR/matomo-config.ini" ;;
+    camera-postgres) plain="$ROOT/camera-postgres/.env"; cipher="$CIPHER_DIR/camera-postgres.env" ;;
     *) usage ;;
   esac
   cipher="$cipher.$host"

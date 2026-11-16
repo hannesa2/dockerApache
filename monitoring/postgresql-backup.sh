@@ -6,6 +6,7 @@ umask 077
 backup_root="${POSTGRES_BACKUP_ROOT:-/daten/sicherung.postgresql/dump}"
 mount_target="${POSTGRES_BACKUP_MOUNT:-/daten}"
 container="${POSTGRES_OWNCLOUD_CONTAINER:-owncloud-staging-db-1}"
+camera_container="${POSTGRES_CAMERA_CONTAINER:-camera-postgres-db-1}"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -46,8 +47,16 @@ verify() {
     fi
 }
 
-for database in MXServer camDoor camHinten camPi3; do
+for database in MXServer; do
     dump_host "$database"
+done
+
+for database in camDoor camHinten camPi3; do
+    echo "Backing up Docker camera database: $camera_container / $database"
+    docker exec "$camera_container" sh -c \
+        'export PGPASSWORD="$POSTGRES_PASSWORD"; exec pg_dump -w -U postgres -d "$1" -Fc' \
+        sh "$database" > "$staging/docker-$database.dump"
+    verify "$staging/docker-$database.dump"
 done
 
 echo "Backing up Docker ownCloud database: $container / owncloud_stage"

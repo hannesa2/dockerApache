@@ -13,10 +13,12 @@ export PGPASSFILE="$pgpass"
 mountpoint -q /daten || { echo "ERROR: /daten is not mounted." >&2; exit 1; }
 [[ -f "$pgpass" && ! -L "$pgpass" ]] || { echo "ERROR: Create $pgpass first (mode 0600)." >&2; exit 1; }
 [[ "$(stat -c '%a' "$pgpass")" == 600 ]] || { echo "ERROR: $pgpass must have mode 0600." >&2; exit 1; }
-for database in MXServer camDoor camHinten camPi3; do
+for database in MXServer; do
     psql -w -h localhost -U hannes -d "$database" -X -q -c 'SELECT 1' >/dev/null
 done
 docker exec owncloud-staging-db-1 pg_isready -U owncloud_stage -d owncloud_stage >/dev/null
+docker exec camera-postgres-db-1 sh -c \
+    'export PGPASSWORD="$POSTGRES_PASSWORD"; for db in camDoor camHinten camPi3; do psql -w -U postgres -d "$db" -X -q -c "SELECT 1" >/dev/null || exit 1; done'
 command -v pg_dump >/dev/null
 command -v pg_restore >/dev/null
 command -v flock >/dev/null

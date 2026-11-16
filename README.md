@@ -73,6 +73,7 @@ und Matomos `config.ini.php`. Einzelne Ziele können gewählt werden:
 ```bash
 ./private/private.sh --crypt apache nextcloud
 MATOMO_CONFIG_PATH=/pfad/zur/config.ini.php ./private/private.sh --decrypt matomo
+./private/private.sh --crypt camera-postgres
 ```
 
 Der Standardpfad für Matomo ist auf Linux
@@ -90,6 +91,12 @@ erhalten sie den kurzen Hostnamen vor `.enc`, z. B.
 aktuellen kurzen Hostnamen (`hostname -s`). Unterschiedliche Rechner müssen
 eindeutige Hostnamen haben. Nach einer Umbenennung des Rechners muss die
 zugehörige Sicherungsdatei entsprechend umbenannt werden.
+
+Für Kamera-PostgreSQL wird `camera-postgres/.env` als
+`camera-postgres.env.<hostname>.enc` verschlüsselt. Dieses optionale Ziel muss
+explizit angegeben werden; der Aufruf ohne Ziele bleibt unverändert. Die
+Änderungsprüfung berücksichtigt es, sobald die `.env` oder eine verschlüsselte
+Kopie auf dem jeweiligen Host existiert.
 
 Bereits vorhandene Dateien ohne Hostname bleiben unverändert und werden nicht
 automatisch verwendet. Sie können nach Prüfung ihrer Herkunft auf den passenden
@@ -533,9 +540,9 @@ updated in the notification wrapper when those scripts change. An unknown
 or unresolvable target is reported as unknown, not as a successful transfer.
 Re-run the installer after changing the email wrapper to update the installed copy.
 
-The Latitude PostgreSQL backup saves the host databases `MXServer`, `camDoor`,
-`camHinten`, and `camPi3`, plus the production Docker database
-`owncloud_stage`. The host's empty `postgres` maintenance database is excluded.
+The Latitude PostgreSQL backup saves the host database `MXServer`, the three
+Docker camera databases, and the production Docker database `owncloud_stage`.
+The host's empty `postgres` maintenance database is excluded.
 It writes private, timestamped custom-format archives under
 `/daten/sicherung.postgresql/dump/daily/`, checks that each archive can be read
 in full, and keeps completed daily backup directories for 30 days. Existing
@@ -544,7 +551,7 @@ not a restore test, and a database-only backup does not include ownCloud files,
 configuration, PostgreSQL roles, or a synchronized filesystem snapshot.
 
 Before installing, configure `/home/hannes/.pgpass` with mode 0600 for
-`localhost:5432`, user `hannes`, and the four host databases; see PostgreSQL's
+`localhost:5432`, user `hannes`, and `MXServer`; see PostgreSQL's
 password-file documentation for escaping `:` and `\`. Then, on Latitude as
 `hannes`, run `bash monitoring/install-postgresql-backup.sh`. It checks
 connectivity, creates and verifies an initial backup, and only then switches

@@ -35,7 +35,11 @@ class PostgreSQLBackupTest(unittest.TestCase):
             [ "${FAIL_RESTORE:-0}" = 0 ] || exit 1
             if [ "$1" = "-l" ]; then echo '1; 0 0 TABLE DATA public example owner'; fi
         """)
-        self.command("docker", '[ "${FAIL_DOCKER:-0}" = 0 ] || exit 1; printf archive')
+        self.command("docker", """
+            [ "${FAIL_DOCKER:-0}" = 0 ] || exit 1
+            [ "${FAIL_CAMERA:-0}" = 0 ] || [ "$2" != camera-postgres-db-1 ] || exit 1
+            printf archive
+        """)
         self.command("date", 'echo 20261115_191501')
 
     def command(self, name, body):
@@ -63,6 +67,9 @@ class PostgreSQLBackupTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         final = managed / "20261115_191501"
         self.assertEqual(len(list(final.glob("*.dump"))), 5)
+        for db in ("camDoor", "camHinten", "camPi3"):
+            self.assertFalse((final / f"host-{db}.dump").exists())
+            self.assertTrue((final / f"docker-{db}.dump").is_file())
         self.assertFalse((final / "host-owncloud.dump").exists())
         self.assertTrue((final / "backup-complete").is_file())
         self.assertEqual(final.stat().st_mode & 0o777, 0o700)
@@ -77,7 +84,7 @@ class PostgreSQLBackupTest(unittest.TestCase):
         (old / "backup-complete").write_text("complete")
         past = time.time() - 31 * 86400
         os.utime(old, (past, past))
-        result = self.run_backup(FAIL_DATABASE="camDoor")
+        result = self.run_backup(FAIL_DATABASE="MXServer")
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(old.exists())
         self.assertFalse((managed / "20261115_191501").exists())
@@ -95,6 +102,11 @@ class PostgreSQLBackupTest(unittest.TestCase):
 
     def test_docker_dump_failure_fails_the_job(self):
         result = self.run_backup(FAIL_DOCKER="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.dump_dir / "daily/20261115_191501").exists())
+
+    def test_camera_dump_failure_fails_the_job(self):
+        result = self.run_backup(FAIL_CAMERA="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.dump_dir / "daily/20261115_191501").exists())
 

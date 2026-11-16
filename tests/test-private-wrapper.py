@@ -14,7 +14,7 @@ class PrivateWrapperTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        for directory in ("private", "buildSrc/scripts", "apache", "nextcloud", "matomo", "gnupg", "bin"):
+        for directory in ("private", "buildSrc/scripts", "apache", "nextcloud", "matomo", "camera-postgres", "gnupg", "bin"):
             (self.root / directory).mkdir(parents=True, mode=0o700)
         for path in ("private/private.sh", "private/check-private.py", "private/check-git.py",
                      "private/git-notice.sh", "buildSrc/scripts/decrypt.sh"):
@@ -178,6 +178,27 @@ class PrivateWrapperTest(unittest.TestCase):
         result = self.run_wrapper("--decrypt", "apache")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.plain[0].read_text(), "private configuration 0\n")
+
+    def test_camera_config_roundtrip_and_monitor(self):
+        camera = self.root / "camera-postgres/.env"
+        camera.write_text("camera secret\n")
+        result = self.run_wrapper("--crypt", "camera-postgres")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / "private-config/gpg/camera-postgres.env.mac2016.enc").is_file())
+        camera.unlink()
+        result = self.run_wrapper("--decrypt", "camera-postgres")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(camera.read_text(), "camera secret\n")
+        for path in self.plain:
+            path.unlink()
+        result = subprocess.run(["python3", str(self.root / "private/check-private.py"), "check"],
+                                env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        camera.write_text("changed\n")
+        result = subprocess.run(["python3", str(self.root / "private/check-private.py"), "check"],
+                                env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("camera-postgres: plaintext or encrypted copy changed", result.stderr)
 
     def test_missing_host_ciphertext_and_invalid_hostname(self):
         result = self.run_wrapper("--crypt", "apache")
