@@ -677,24 +677,29 @@ Each backup folder contains:
 
 | File | Contents |
 |---|---|
-| `mysql_webapp.sql.gz` | Full MySQL dump (gzipped SQL) |
+| `mysql_wordpress.sql.gz` | `wordpress` database (gzipped SQL) |
+| `mysql_wordpress_mxtracks.sql.gz` | `wordpress_mxtracks` database (gzipped SQL) |
 | `www.tar.gz` | Web root files |
 | `vhosts.tar.gz` | Apache vhost configs |
+| `databases.txt`, `backup-complete` | Database list and completion marker |
 
-#### Manual database-only commands
+`MYSQL_BACKUP_DATABASES` in `.env` overrides the space-separated database
+list. Each database is dumped separately; a missing database or failed dump
+fails the backup. `backup-complete` is written only after all dumps and file
+archives succeed. A successful dump is not a tested restoration or an atomic
+snapshot across the database and web files.
 
-```bash
-# Dump
-docker compose exec db \
-  mysqldump -u webapp -pchangeme_db webapp | gzip > backup.sql.gz
+The restore validates all backup files before changing anything, then asks
+separately before replacing each database and the web/vhost files. Existing web
+and vhost directories are retained with a `.pre-restore-<timestamp>` suffix.
+Restoring a database is destructive and a failed import may leave it incomplete;
+take an independent backup first. MySQL users, passwords and grants are **not**
+part of these dumps: retain or recreate them separately when restoring onto a
+fresh server. Legacy backups without `backup-complete` must be restored manually.
 
-# Restore
-gunzip -c backup.sql.gz | docker compose exec -T db \
-  mysql -u webapp -pchangeme_db webapp
-
-# Interactive MySQL shell
-docker compose exec db mysql -u webapp -pchangeme_db webapp
-```
+`MYSQL_DATABASE` and `MYSQL_USER` are optional initial-setup settings. Leave
+them empty to avoid creating `webapp` on a fresh MySQL data directory; changing
+these settings does not change an already initialized MySQL database or user.
 
 ### Build the custom image locally (optional)
 

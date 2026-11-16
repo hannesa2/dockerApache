@@ -12,8 +12,8 @@ services:
       - ${APACHE_DATA_DIR:-./data}/mysql-config:/etc/mysql/conf.d
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-changeme_root}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-webapp}
-      MYSQL_USER: ${MYSQL_USER:-webapp}
+      MYSQL_DATABASE: ${MYSQL_DATABASE-}
+      MYSQL_USER: ${MYSQL_USER-}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-changeme_db}
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-changeme_root}"]
@@ -49,8 +49,8 @@ services:
       - ${APACHE_DATA_DIR:-./data}/php-config:/usr/local/etc/php/conf.d/custom
     environment:
       MYSQL_HOST: db
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-webapp}
-      MYSQL_USER: ${MYSQL_USER:-webapp}
+      MYSQL_DATABASE: ${MYSQL_DATABASE-}
+      MYSQL_USER: ${MYSQL_USER-}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-changeme_db}
       APACHE_SERVER_NAME: ${APACHE_SERVER_NAME:-localhost}
     networks:

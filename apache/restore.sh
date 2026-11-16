@@ -17,47 +17,61 @@ if [ -z "$BACKUP_PATH" ] || [ ! -d "$BACKUP_PATH" ]; then
 fi
 
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
-MYSQL_DATABASE="${MYSQL_DATABASE:-webapp}"
-MYSQL_USER="${MYSQL_USER:-webapp}"
-MYSQL_PASSWORD="${MYSQL_PASSWORD:-changeme_db}"
+MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-changeme_root}"
 APACHE_DATA_DIR="${APACHE_DATA_DIR:-$SCRIPT_DIR/data}"
 
-echo "==> Restore from: $BACKUP_PATH"
-read -r -p "WARNING: This will OVERWRITE current data. Continue? [y/N] " confirm
-[[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+[[ -f "$BACKUP_PATH/backup-complete" && "$(cat "$BACKUP_PATH/backup-complete")" == "apache-backup-v2" ]] || {
+    echo "ERROR: Missing complete v2 backup marker; legacy or incomplete backups require manual restoration." >&2
+    exit 1
+}
+[[ -f "$BACKUP_PATH/databases.txt" ]] || { echo "ERROR: Backup database list missing." >&2; exit 1; }
+databases=()
+while IFS= read -r database || [[ -n "$database" ]]; do
+    [[ "$database" =~ ^[a-zA-Z0-9_]+$ ]] || { echo "ERROR: Invalid database name in backup." >&2; exit 1; }
+    databases+=("$database")
+    [[ -s "$BACKUP_PATH/mysql_${database}.sql.gz" ]] || { echo "ERROR: Missing dump for $database." >&2; exit 1; }
+    gzip -t "$BACKUP_PATH/mysql_${database}.sql.gz"
+done < "$BACKUP_PATH/databases.txt"
+[[ "${#databases[@]}" -gt 0 ]] || { echo "ERROR: Backup contains no databases." >&2; exit 1; }
+for archive in www.tar.gz vhosts.tar.gz; do
+    [[ -s "$BACKUP_PATH/$archive" ]] || { echo "ERROR: Missing archive: $archive." >&2; exit 1; }
+    tar -tzf "$BACKUP_PATH/$archive" >/dev/null
+done
 
-# ── 1. MySQL ──────────────────────────────────────────────────────────────────
-DB_DUMP="$BACKUP_PATH/mysql_${MYSQL_DATABASE}.sql.gz"
-if [ -f "$DB_DUMP" ]; then
-    echo "==> Restoring MySQL database '$MYSQL_DATABASE' ..."
+echo "==> Restore from: $BACKUP_PATH"
+for database in "${databases[@]}"; do
+    read -r -p "WARNING: Replace MySQL database '$database'? [y/N] " confirm
+    [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Skipped database '$database'."; continue; }
+    echo "==> Restoring MySQL database '$database' ..."
     docker compose -f "$COMPOSE_FILE" exec -T db \
-        mysql -u root -p"${MYSQL_ROOT_PASSWORD:-changeme_root}" 2>/dev/null \
-        -e "DROP DATABASE IF EXISTS \`$MYSQL_DATABASE\`; CREATE DATABASE \`$MYSQL_DATABASE\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL ON \`$MYSQL_DATABASE\`.* TO '$MYSQL_USER'@'%';"
-    gunzip -c "$DB_DUMP" | docker compose -f "$COMPOSE_FILE" exec -T db \
-        mysql -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" 2>/dev/null
-    echo "    Database restored."
-else
-    echo "WARNING: $DB_DUMP not found – skipping."
-fi
+        mysql -u root -p"$MYSQL_ROOT_PASSWORD" \
+        -e "DROP DATABASE IF EXISTS \`$database\`;" </dev/null
+    gunzip -c "$BACKUP_PATH/mysql_${database}.sql.gz" | docker compose -f "$COMPOSE_FILE" exec -T db \
+        mysql -u root -p"$MYSQL_ROOT_PASSWORD"
+    echo "    Database '$database' restored."
+done
 
 # ── 2. Web root ───────────────────────────────────────────────────────────────
 WWW_ARCHIVE="$BACKUP_PATH/www.tar.gz"
-if [ -f "$WWW_ARCHIVE" ]; then
+read -r -p "WARNING: Replace web root and vhost configs? [y/N] " confirm
+if [[ "$confirm" =~ ^[Yy]$ ]]; then
     echo "==> Restoring web root ..."
-    rm -rf "$APACHE_DATA_DIR/www"
+    previous_suffix="$(date +%Y%m%d_%H%M%S)"
+    [[ ! -e "$APACHE_DATA_DIR/www.pre-restore-$previous_suffix" &&
+       ! -e "$APACHE_DATA_DIR/vhosts.pre-restore-$previous_suffix" ]] || {
+        echo "ERROR: Pre-restore directory already exists." >&2; exit 1;
+    }
+    sudo mv "$APACHE_DATA_DIR/www" "$APACHE_DATA_DIR/www.pre-restore-$previous_suffix"
     sudo LANG=C tar -xzf "$WWW_ARCHIVE" -C "$APACHE_DATA_DIR"
     echo "    Web root restored."
-fi
-
-# ── 3. Vhost configs ──────────────────────────────────────────────────────────
-VHOST_ARCHIVE="$BACKUP_PATH/vhosts.tar.gz"
-if [ -f "$VHOST_ARCHIVE" ]; then
     echo "==> Restoring vhost configs ..."
-    rm -rf "$APACHE_DATA_DIR/vhosts"
-    sudo LANG=C tar -xzf "$VHOST_ARCHIVE" -C "$APACHE_DATA_DIR"
+    sudo mv "$APACHE_DATA_DIR/vhosts" "$APACHE_DATA_DIR/vhosts.pre-restore-$previous_suffix"
+    sudo LANG=C tar -xzf "$BACKUP_PATH/vhosts.tar.gz" -C "$APACHE_DATA_DIR"
     docker compose -f "$COMPOSE_FILE" restart apache
     echo "    Vhosts restored and Apache restarted."
+    echo "    Previous directories retained with suffix .pre-restore-$previous_suffix."
+else
+    echo "Skipped web root and vhost configs."
 fi
 
-echo "==> Restore complete."
-
+echo "==> Restore selections completed."
