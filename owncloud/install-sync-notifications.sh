@@ -9,6 +9,7 @@ helper_target="/usr/local/sbin/run-sync-with-email"
 owncloud_job="/usr/local/sbin/owncloud-mirror-sync"
 owncloud_cron="/etc/cron.d/owncloud-mirror-sync"
 postgres_backup="/daten/sicherung.postgresql/sicherung.postgresql.sh"
+postgres_backup_new="/daten/sicherung.postgresql/postgresql-backup.sh"
 state_dir="$owner_home/.local/state/sync-job-notify"
 
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -28,12 +29,16 @@ for command in mail python3 crontab; do
     }
 done
 
-for job in "$owncloud_job" "$postgres_backup"; do
+for job in "$owncloud_job"; do
     [[ -x "$job" ]] || {
         echo "ERROR: Expected executable scheduled job is missing: $job" >&2
         exit 1
     }
 done
+[[ -x "$postgres_backup" || -x "$postgres_backup_new" ]] || {
+    echo "ERROR: No PostgreSQL backup script found." >&2
+    exit 1
+}
 
 install -o root -g root -m 0755 "$helper_source" "$helper_target"
 install -d -o "$owner" -g "$owner" -m 0750 "$state_dir"
@@ -42,13 +47,14 @@ user_crontab_tmp="$(mktemp)"
 trap 'rm -f "$user_crontab_tmp"' EXIT
 chmod 0600 "$user_crontab_tmp"
 
-python3 - "$owncloud_cron" "$postgres_backup" "$user_crontab_tmp" <<'PY'
+python3 - "$owncloud_cron" "$postgres_backup" "$postgres_backup_new" "$user_crontab_tmp" <<'PY'
 from pathlib import Path
 import sys
 
 cron_path = Path(sys.argv[1])
 postgres_backup = sys.argv[2]
-user_crontab = Path(sys.argv[3])
+postgres_backup_new = sys.argv[3]
+user_crontab = Path(sys.argv[4])
 
 if not cron_path.is_file():
     raise SystemExit(f"Required ownCloud cron file is missing: {cron_path}")
@@ -88,10 +94,12 @@ if result.returncode not in (0, 1):
     raise SystemExit(f"Could not read hannes crontab: {result.stderr.strip()}")
 
 lines = result.stdout.splitlines()
+if any(postgres_backup_new in line and not line.lstrip().startswith("#") for line in lines):
+    postgres_backup = postgres_backup_new
 jobs = {
     postgres_backup: (
         "15 19 * * * /usr/local/sbin/run-sync-with-email "
-        '"PostgreSQL backups" /daten/sicherung.postgresql/sicherung.postgresql.sh '
+        f'"PostgreSQL backups" {postgres_backup} '
         ">> /home/hannes/.local/state/sync-job-notify/postgresql.log 2>&1"
     ),
 }
@@ -118,11 +126,13 @@ chown root:root "$owncloud_cron"
 chmod 0644 "$owncloud_cron"
 crontab -u "$owner" "$user_crontab_tmp"
 
-python3 - "$postgres_backup" <<'PY'
+python3 - "$postgres_backup" "$postgres_backup_new" <<'PY'
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1])
+if not path.exists() or Path(sys.argv[2]).exists():
+    raise SystemExit(0)
 text = path.read_text()
 lines = text.splitlines()
 if not lines or lines[0].strip() != "#!/bin/bash":

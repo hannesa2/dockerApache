@@ -519,10 +519,33 @@ sudo bash monitoring/install-sync-job-status.sh
 The existing job-email wrapper writes atomic, credential-free status records
 under `/home/hannes/.local/state/sync-job-notify/status/`. The installer also
 wraps the existing Nextcloud cron command without changing its schedule.
-PostgreSQL backup emails identify their local destination as
-`Latitude -> /daten/sicherung.postgresql/dump/`; this job does not transfer
-backups to mac2016. Re-run the installer after changing the email wrapper to
-update the installed copy.
+Job emails show the source host and expected destination, including local
+PostgreSQL backups and the mac2016 mirror jobs. Apache and Nextcloud mirror
+destinations are read from their Latitude `.env` files; the paths for the
+other mirror jobs match their current Latitude/mac2016 scripts and must be
+updated in the notification wrapper when those scripts change. An unknown
+or unresolvable target is reported as unknown, not as a successful transfer.
+Re-run the installer after changing the email wrapper to update the installed copy.
+
+The Latitude PostgreSQL backup saves the host databases `MXServer`, `camDoor`,
+`camHinten`, and `camPi3`, plus the production Docker database
+`owncloud_stage`. The host's empty `postgres` maintenance database is excluded.
+It writes private, timestamped custom-format archives under
+`/daten/sicherung.postgresql/dump/daily/`, checks that each archive can be read
+in full, and keeps completed daily backup directories for 30 days. Existing
+legacy `.bak` and `.dump` files are not changed or removed. An archive check is
+not a restore test, and a database-only backup does not include ownCloud files,
+configuration, PostgreSQL roles, or a synchronized filesystem snapshot.
+
+Before installing, configure `/home/hannes/.pgpass` with mode 0600 for
+`localhost:5432`, user `hannes`, and the four host databases; see PostgreSQL's
+password-file documentation for escaping `:` and `\`. Then, on Latitude as
+`hannes`, run `bash monitoring/install-postgresql-backup.sh`. It checks
+connectivity, creates and verifies an initial backup, and only then switches
+the existing cron entry without changing its schedule. The old script and
+previous dumps remain untouched. Existing legacy files may still be readable
+by other local users; review their permissions separately.
+
 Existing PostgreSQL, GitLab, Apache and MXServer wrapper jobs begin recording
 on their next execution; no jobs are run by the installer. Both monitors use
 `/home/hannes/bin/sync-job-report.py` on Latitude; the mac2016 monitor retrieves
