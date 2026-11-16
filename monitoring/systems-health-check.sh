@@ -102,7 +102,6 @@ latitude_containers=(
     apache-db-1
     gitlab
     gitlab-runner
-    homeassistant
     nextcloud-coredns-dot-1
     nextcloud-dnsmasq-1
 )
@@ -114,7 +113,12 @@ check_http "Latitude native Apache" "http://127.0.0.1/"
 check_http "Latitude GlassFish" "http://127.0.0.1:8081/"
 check_http "Latitude Apache container" "http://127.0.0.1:8085/"
 check_http "Latitude GitLab" "http://127.0.0.1:8083/users/sign_in" 30
-check_http "Latitude Home Assistant" "http://127.0.0.1:8123/"
+if [[ -r "$HOME/bin/check-beelink-homeassistant.sh" ]]; then
+    source "$HOME/bin/check-beelink-homeassistant.sh"
+    check_beelink_homeassistant
+else
+    record FAIL "beelink Home Assistant monitoring" "check helper is missing"
+fi
 
 if dns_answer="$(dig +short +time=2 +tries=1 @192.168.178.129 nextcloud.mxtracks.info A 2>/dev/null)" &&
     [[ "$dns_answer" == "192.168.178.129" ]]; then

@@ -497,6 +497,12 @@ are reported even if Latitude never starts. Both send an initial report, then
 email only when checks fail or recover; unchanged failures are logged without
 hourly email spam.
 
+Both monitors also check the production Home Assistant on beelink: its HTTP
+endpoint over the LAN and its Docker container over SSH. They no longer expect
+the retired Latitude Home Assistant container to run. Each monitor needs
+passwordless SSH access to beelink and a verified host key in `known_hosts`;
+SSH failures and HTTP failures are reported independently.
+
 GitLab login-page checks allow 30 seconds on both hosts, compared with 8
 seconds for other HTTP checks. This still checks the real login route; a
 healthy container alone does not prove the web application is available.

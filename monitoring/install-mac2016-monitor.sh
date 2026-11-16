@@ -27,6 +27,7 @@ if [[ ! -r "$HOME/.ssh/id_rsa" || ! -r "$HOME/.ssh/known_hosts" ]]; then
 fi
 
 install -d -m 0750 "$INSTALL_DIR" "$STATE_DIR"
+install -m 0750 "$SCRIPT_DIR/check-beelink-homeassistant.sh" "$INSTALL_DIR/check-beelink-homeassistant.sh"
 install -m 0750 "$SOURCE_SCRIPT" "$INSTALL_SCRIPT"
 
 current_crontab="$(mktemp)"
@@ -43,7 +44,7 @@ grep -vF "$CRON_MARKER" "$current_crontab" |
 } | crontab -
 
 echo "Installed the hourly mac2016-hosted availability monitor at minute 10."
-echo "It checks mac2016 and Latitude, emailing only on failures or recovery."
+echo "It checks mac2016, Latitude and beelink Home Assistant, emailing only on failures or recovery."
 echo "The user crontab runs independently of an interactive login."
 echo "Logs and notification state are stored under $STATE_DIR."
 echo "Running the initial check now."

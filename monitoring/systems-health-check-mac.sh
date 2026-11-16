@@ -166,6 +166,13 @@ check_http "mac2016 GitLab mirror" "https://git16.mxtracks.info/users/sign_in" \
 check_http "mac2016 MXServer" "https://www16.mxtracks.info:9433/backend/MXServer/rest/version" \
     "www16.mxtracks.info:9433:127.0.0.1"
 
+if [[ -r "$HOME/bin/check-beelink-homeassistant.sh" ]]; then
+    source "$HOME/bin/check-beelink-homeassistant.sh"
+    check_beelink_homeassistant
+else
+    record FAIL "beelink Home Assistant monitoring" "check helper is missing"
+fi
+
 owncloud_status="$(curl --silent --insecure --fail --connect-timeout 3 --max-time 8 \
     --resolve "www16.mxtracks.info:9443:127.0.0.1" \
     "https://www16.mxtracks.info:9443/owncloud/status.php" 2>/dev/null)" || owncloud_status=""
@@ -238,7 +245,7 @@ for unit in apache2 glassfish postgresql@16-main docker; do
 done
 
 for name in \
-    apache-apache-1 apache-db-1 gitlab gitlab-runner homeassistant \
+    apache-apache-1 apache-db-1 gitlab gitlab-runner \
     nextcloud-coredns-dot-1 nextcloud-dnsmasq-1 \
     owncloud-staging-owncloud-1 owncloud-staging-db-1; do
     check_container "$name"
@@ -248,7 +255,6 @@ check_http "Latitude native Apache" "http://127.0.0.1/"
 check_http "Latitude GlassFish" "http://127.0.0.1:8081/"
 check_http "Latitude Apache container" "http://127.0.0.1:8085/"
 check_http "Latitude GitLab" "http://127.0.0.1:8083/users/sign_in" 30
-check_http "Latitude Home Assistant" "http://127.0.0.1:8123/"
 
 owncloud_status="$(curl --silent --fail --connect-timeout 3 --max-time 8 \
     "http://127.0.0.1:8093/status.php" 2>/dev/null)" || owncloud_status=""

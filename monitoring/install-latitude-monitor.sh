@@ -27,6 +27,7 @@ if [[ ! -r /home/hannes/.ssh/id_rsa || ! -r /home/hannes/.ssh/known_hosts ]]; th
 fi
 
 install -d -m 0750 "$INSTALL_DIR" "$STATE_DIR"
+install -m 0750 "$SCRIPT_DIR/check-beelink-homeassistant.sh" "$INSTALL_DIR/check-beelink-homeassistant.sh"
 install -m 0750 "$SOURCE_SCRIPT" "$INSTALL_SCRIPT"
 
 current_crontab="$(mktemp)"
@@ -43,6 +44,6 @@ grep -vF "$CRON_MARKER" "$current_crontab" |
 } | crontab -
 
 echo "Installed an hourly availability check on latitude."
-echo "It checks Latitude and mac2016 services, emailing only on state changes."
+echo "It checks Latitude, mac2016 and beelink Home Assistant, emailing only on state changes."
 echo "Running the initial check now."
 "$INSTALL_SCRIPT"
