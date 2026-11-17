@@ -1415,6 +1415,58 @@ check settled, `beelink-job-status --health-json` returned an empty failures
 list and systemd reported zero failed units. This confirms boot recovery,
 not the future overnight scheduled executions; no mirror jobs were rerun.
 
+### LAN Java application and administration access (prepared)
+
+For the requested link table at `http://beelink/`, run
+`sudo python3 ~/git/dockerApache/monitoring/install-beelink-intranet.py`
+directly on beelink. This installs a static page and separate
+`zz-intranet.conf` named vhost for `beelink`, `beelink.local` and the LAN IPv4.
+The existing default-deny vhost and public domain configurations are unchanged.
+The installer config-tests and gracefully reloads Apache, checks the exact
+HTTP response and removes the additions on failure. The page has no credentials;
+its hostname selection is not an access-control boundary (the TCP proxy hides
+original client IPs). Java-port LAN restrictions remain separate.
+
+The user requested direct LAN access to both applications and administration
+consoles. The prepared `publish-beelink-java-lan.py --install` helper exposes:
+
+| Service | LAN URL |
+|---------|---------|
+| WildFly applications | `http://192.168.178.142:8080/` |
+| WildFly administration | `http://192.168.178.142:9990/console/` |
+| GlassFish MXServer | `http://192.168.178.142:8081/MXServer/` |
+| GlassFish administration | `https://192.168.178.142:4848/` |
+
+These are not enabled until the following interactive command is run on beelink:
+
+```bash
+sudo python3 ~/git/dockerApache/monitoring/publish-beelink-java-lan.py --install
+```
+
+The first install attempt stopped before any changes because UFW is disabled
+(`ENABLED=no`), despite its systemd unit showing active. The corrected helper
+does not enable UFW or alter its configuration. It installs a dedicated
+`beelink-java-lan-firewall.service` which atomically manages only the nftables
+table `inet beelink_java_lan`. This accepts loopback and LAN-interface traffic
+from `192.168.178.0/24` to the four Java ports on `192.168.178.142`, dropping
+other traffic to those exact endpoints. Other ports and firewall tables are
+unchanged. The rules and repeated replacement were validated in a disposable
+container network namespace, without touching the host firewall.
+
+Sockets bind only the IPv4 LAN address on `enp1s0`, after production and the
+dedicated firewall service start, retaining the corrected late socket boot
+ordering. No IPv6 listeners or router changes are made. Container
+addresses are resolved at each socket worker activation, not hardcoded.
+Workers drop root privileges before forwarding. Existing application containers,
+data mounts, production public web ports, credentials and images are unchanged.
+The installer checks that both management APIs reject unauthenticated access
+with HTTP 401 before and after publication. Host-side probes confirmed this
+and confirmed the GlassFish admin TLS endpoint responds with a modern client.
+GlassFish retains its existing self-signed certificate (browser warning
+expected); WildFly administration uses HTTP/Digest, so use only a trusted LAN
+or an SSH tunnel when transport encryption is needed. A private WLAN alone
+does not encrypt HTTP end-to-end.
+
 ### Production naming correction (applied)
 
 The corrected retry completed on 2026-11-17 around 22:25. Live inspection
