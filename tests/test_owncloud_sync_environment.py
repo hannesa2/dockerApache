@@ -20,10 +20,10 @@ class OwncloudEnvironmentTest(unittest.TestCase):
             result = subprocess.run(
                 ["bash", "-euc", source[start:end] + "\nsource_occ status"],
                 env={**os.environ, "PATH": temporary + ":" + os.environ["PATH"],
-                     "BEELINK_PRODUCTION": "1", "SOURCE_WEB": "beelink-app-test-owncloud-app-1"},
+                     "BEELINK_PRODUCTION": "1", "SOURCE_WEB": "beelink-apps-owncloud-app-1"},
                 text=True, capture_output=True, check=True)
             self.assertEqual(result.stdout.strip(),
-                             "exec --user www-data beelink-app-test-owncloud-app-1 occ status")
+                             "exec --user www-data beelink-apps-owncloud-app-1 occ status")
         self.assertLess(source.index('source_occ status || die'),
                         source.index('remote_compose "stop owncloud"'))
 

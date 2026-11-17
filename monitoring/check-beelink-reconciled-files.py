@@ -27,10 +27,10 @@ TRANSFER = Path("/daten/latitude-migration/cutover-20261117")
 REPORT = control.RUNTIME / "files-reconciliation-report.json"
 SYNC_WORKERS = ("beelink-file-reconcile", "beelink-file-reconcile-lock")
 STOPPED_APPS = (
-    "beelink-frontend-test-frontend-1", "beelink-app-test-owncloud-app-1",
-    "beelink-wordpress-test-apache-1", "beelink-matomo-test-matomo-1",
+    "beelink-frontend-frontend-1", "beelink-apps-owncloud-app-1",
+    "beelink-wordpress-apache-1", "beelink-matomo-matomo-1",
     "beelink-java-web-glassfish-1", "beelink-java-web-wildfly-1",
-    "beelink-artifacts-test-artifacts-1",
+    "beelink-artifacts-artifacts-1",
 )
 
 
@@ -43,7 +43,7 @@ def verify():
     for name in SYNC_WORKERS:
         if control.capture("docker", "ps", "--quiet", "--filter", "name=^/" + name + "$"):
             raise RuntimeError("File sync is still active; wait for its successful exit: " + name)
-    if control.capture("systemctl", "is-active", "beelink-staging.service") != "active":
+    if control.capture("systemctl", "is-active", "beelink-production.service") != "active":
         raise RuntimeError("Managed isolated staging must remain active")
     for name in STOPPED_APPS:
         if control.container_identity(name)["running"]:
@@ -51,7 +51,7 @@ def verify():
     if not (control.RUNTIME / "database-reconciliation/report.json").is_file():
         raise RuntimeError("Final application databases must be verified first")
     protected = record["protected"]
-    expected = {"homeassistant", "camera-postgres-db-1", "beelink-app-test-gitlab-1"}
+    expected = {"homeassistant", "camera-postgres-db-1", "beelink-apps-gitlab-1"}
     if set(protected) != expected:
         raise RuntimeError("Unexpected protected-container inventory")
     for name, previous in protected.items():
@@ -87,7 +87,7 @@ def verify():
     finally:
         if not succeeded:
             print("ERROR: File checks incomplete; stopping the isolated frontend.", flush=True)
-            control.run("docker", "stop", "beelink-frontend-test-frontend-1")
+            control.run("docker", "stop", "beelink-frontend-frontend-1")
 
 
 def main():

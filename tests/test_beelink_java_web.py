@@ -36,7 +36,7 @@ class BeelinkJavaWebTest(unittest.TestCase):
         self.assertTrue(next(m for m in glassfish["volumes"]
                              if m["target"] == "/srv/postgres/data/mxinfo")["read_only"])
         self.assertEqual(config["services"]["apache"]["environment"]["MYSQL_HOST"],
-                         "beelink-staging-apache-mysql-1")
+                         "beelink-databases-apache-mysql-1")
 
     def test_patch_jdbc_without_changing_credentials_or_other_pools(self):
         source = f"""<domain><jdbc-connection-pool name="{WEB.POOL}">
@@ -55,7 +55,7 @@ class BeelinkJavaWebTest(unittest.TestCase):
             tree = ET.parse(path)
             properties = {p.get("name"): p.get("value")
                           for p in tree.find("jdbc-connection-pool").findall("property")}
-            self.assertEqual(properties["ServerName"], "beelink-staging-mxserver-1")
+            self.assertEqual(properties["ServerName"], "beelink-databases-mxserver-1")
             self.assertEqual(properties["PortNumber"], "5432")
             self.assertEqual(properties["Password"], "fixture")
             self.assertEqual(properties["User"], "hannes")
@@ -104,7 +104,7 @@ class BeelinkJavaWebTest(unittest.TestCase):
         self.assertIn('"$JAVA_HOME/bin/javac"', command)
         self.assertIn("domains/domain1/lib/*", command)
         self.assertEqual(run.call_args.kwargs["input"], WEB.JDBC_PROBE)
-        self.assertIn("beelink-staging-mxserver-1:5432/MXServer", WEB.JDBC_PROBE)
+        self.assertIn("beelink-databases-mxserver-1:5432/MXServer", WEB.JDBC_PROBE)
         self.assertIn("public.tracks", WEB.JDBC_PROBE)
         self.assertNotIn("disabledAlgorithms", command)
 

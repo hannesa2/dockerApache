@@ -19,7 +19,7 @@ SPEC.loader.exec_module(frontend)
 apps = frontend.apps
 WORK = apps.RUNTIME / "artifacts"
 IMAGE = "local/github-artifacts:server-relocation"
-COMPOSE = ["docker", "compose", "-p", "beelink-artifacts-test", "-f", str(WORK / "compose.json")]
+COMPOSE = ["docker", "compose", "-p", "beelink-artifacts", "-f", str(WORK / "compose.json")]
 CONFIGURE = r"""
 from pathlib import Path
 import os
@@ -49,7 +49,7 @@ value = base64.b64encode((credentials['username'] + ':' + credentials['password'
 request = urllib.request.Request('http://127.0.0.1:5000/hostname/',
     headers={'Authorization': 'Basic ' + value})
 with urllib.request.urlopen(request, timeout=10) as response:
-    if response.status != 200 or 'beelink-artifacts-test' not in response.read().decode():
+    if response.status != 200 or 'beelink-artifacts' not in response.read().decode():
         raise RuntimeError('Artifact application authentication failed')
 print('Original artifact credentials authenticate; no writes performed')
 """
@@ -57,9 +57,9 @@ print('Original artifact credentials authenticate; no writes performed')
 
 def compose_config(image):
     return {
-        "name": "beelink-artifacts-test",
+        "name": "beelink-artifacts",
         "services": {"artifacts": {
-            "image": image, "hostname": "beelink-artifacts-test",
+            "image": image, "hostname": "beelink-artifacts",
             "user": "10001:10001", "restart": "no", "networks": ["isolated"],
             "read_only": True, "tmpfs": ["/tmp"],
             "volumes": [
@@ -67,7 +67,7 @@ def compose_config(image):
                 apps.mount(WORK / "parameter.yml", "/app/parameter.yml", True),
             ],
         }},
-        "networks": {"isolated": {"external": True, "name": "beelink-staging_isolated"}},
+        "networks": {"isolated": {"external": True, "name": "beelink-databases_isolated"}},
     }
 
 
@@ -174,7 +174,7 @@ def main():
             or not frontend.homeassistant_settings()):
         raise RuntimeError("Complete private frontend/Home Assistant staging first")
     if not json.loads(apps.capture(
-            "docker", "network", "inspect", "beelink-staging_isolated"))[0]["Internal"]:
+            "docker", "network", "inspect", "beelink-databases_isolated"))[0]["Internal"]:
         raise RuntimeError("Artifact staging must remain internal-only")
     if shutil.disk_usage(apps.RUNTIME).free < 5 * 1024**3:
         raise RuntimeError("At least 5 GiB free required")

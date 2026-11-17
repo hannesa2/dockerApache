@@ -117,7 +117,7 @@ class BeelinkFrontendTest(unittest.TestCase):
         self.assertNotIn("host-gateway", text)
 
     def test_owncloud_patch_guards_test_database_and_uses_exact_proxy_ip(self):
-        self.assertIn("beelink-staging-owncloud-1", FRONT.OWNCLOUD_PROXY)
+        self.assertIn("beelink-databases-owncloud-1", FRONT.OWNCLOUD_PROXY)
         self.assertIn("owncloud_stage", FRONT.OWNCLOUD_PROXY)
         self.assertIn("$CONFIG['trusted_proxies'] = [$argv[1]]", FRONT.OWNCLOUD_PROXY)
         self.assertIn("$CONFIG['overwritewebroot'] = '/owncloud'", FRONT.OWNCLOUD_PROXY)
@@ -135,7 +135,7 @@ class BeelinkFrontendTest(unittest.TestCase):
         self.assertNotIn("--location", command)
 
     def test_matomo_only_adds_original_proxy_host_to_isolated_config(self):
-        source = ('[database]\nhost = "beelink-staging-native-mysql-1"\n'
+        source = ('[database]\nhost = "beelink-databases-native-mysql-1"\n'
                   'password = "fixture"\n[General]\ntrusted_hosts[] = "localhost"\n'
                   'proxy_scheme_headers[] = "one"\nproxy_scheme_headers[] = "two"\n')
         result = FRONT.matomo_proxy_config(source)
@@ -144,7 +144,7 @@ class BeelinkFrontendTest(unittest.TestCase):
         self.assertEqual(result.count("proxy_scheme_headers[]"), 2)
         self.assertEqual(FRONT.matomo_proxy_config(result), result)
         with self.assertRaises(RuntimeError):
-            FRONT.matomo_proxy_config(source.replace("beelink-staging-native-mysql-1", "localhost"))
+            FRONT.matomo_proxy_config(source.replace("beelink-databases-native-mysql-1", "localhost"))
 
     def test_rejects_changed_existing_configuration(self):
         with tempfile.TemporaryDirectory() as temporary:

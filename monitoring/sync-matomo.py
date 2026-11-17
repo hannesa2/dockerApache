@@ -112,9 +112,9 @@ def synchronize(apply):
         with dump.open("wb") as stream:
             command = ["mysqldump", f"--defaults-extra-file={defaults}"]
             if os.environ.get("BEELINK_PRODUCTION") == "1":
-                if database["host"] != "beelink-staging-native-mysql-1":
+                if database["host"] != "beelink-databases-native-mysql-1":
                     raise RuntimeError("Unexpected beelink Matomo database host")
-                command = ["docker", "exec", "beelink-staging-native-mysql-1",
+                command = ["docker", "exec", "beelink-databases-native-mysql-1",
                            "mysqldump", "--defaults-extra-file=/run/restore-client.cnf"]
             run(command + [
                  "--single-transaction", "--no-tablespaces", "--hex-blob",

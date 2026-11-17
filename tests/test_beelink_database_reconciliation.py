@@ -89,7 +89,7 @@ CREATE VIEW `system_view` AS SELECT 1;
                     patch.object(DB.restore, "postgres_table_count", return_value=12):
                 self.assertEqual(DB.restore_postgres("owncloud", "owncloud_stage", path), 12)
             commands = [call.args for call in run.call_args_list]
-            self.assertTrue(all("beelink-staging-owncloud-1" in command for command in commands))
+            self.assertTrue(all("beelink-databases-owncloud-1" in command for command in commands))
             self.assertIn("--exit-on-error", commands[1])
             self.assertIn("--create", commands[1])
 
@@ -101,10 +101,10 @@ CREATE VIEW `system_view` AS SELECT 1;
                 DB.main()
 
     def test_affected_apps_exclude_gitlab_and_existing_cameras(self):
-        self.assertNotIn("beelink-app-test-gitlab-1", DB.APP_CONTAINERS)
+        self.assertNotIn("beelink-apps-gitlab-1", DB.APP_CONTAINERS)
         self.assertNotIn("camera-postgres-db-1", DB.APP_CONTAINERS)
         self.assertNotIn("homeassistant", DB.APP_CONTAINERS)
-        self.assertNotIn("beelink-staging-cameras-1", DB.APP_CONTAINERS)
+        self.assertNotIn("beelink-databases-cameras-1", DB.APP_CONTAINERS)
 
 
 if __name__ == "__main__":

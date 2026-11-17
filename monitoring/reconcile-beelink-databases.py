@@ -38,9 +38,9 @@ SCHEMAS = {
 }
 SYSTEM_SCHEMAS = {"mysql", "sys", "information_schema", "performance_schema"}
 APP_CONTAINERS = (
-    "beelink-app-test-owncloud-app-1", "beelink-java-web-glassfish-1",
-    "beelink-java-web-wildfly-1", "beelink-wordpress-test-apache-1",
-    "beelink-matomo-test-matomo-1",
+    "beelink-apps-owncloud-app-1", "beelink-java-web-glassfish-1",
+    "beelink-java-web-wildfly-1", "beelink-wordpress-apache-1",
+    "beelink-matomo-matomo-1",
 )
 
 
@@ -68,7 +68,7 @@ def application_sql(archive, allowed):
 
 
 def mysql_command(service, binary="mysql"):
-    return ["docker", "exec", "-i", "beelink-staging-" + service + "-1", binary,
+    return ["docker", "exec", "-i", "beelink-databases-" + service + "-1", binary,
             "--defaults-file=/run/restore-client.cnf", "--protocol=socket"]
 
 
@@ -104,7 +104,7 @@ def restore_mysql(service, archive):
 
 
 def restore_postgres(service, database, archive):
-    container = "beelink-staging-" + service + "-1"
+    container = "beelink-databases-" + service + "-1"
     command = ["docker", "exec", "-i", "--user", "postgres", container]
     run(*command, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "beelink_restore",
         "-d", "postgres", "-c",
@@ -152,7 +152,7 @@ def reconcile(snapshots):
         raise RuntimeError("Preserve the upgraded WordPress core before restoring its database")
     protected = {name: control.container_identity(name)
                  for name in ("homeassistant", "camera-postgres-db-1",
-                              "beelink-app-test-gitlab-1")}
+                              "beelink-apps-gitlab-1")}
     if not all(item["running"] for item in protected.values()):
         raise RuntimeError("Protected services must be running")
     record = {"snapshots": str(snapshots), "checksums": entries,
@@ -201,7 +201,7 @@ def main():
     with Path("/run/lock/beelink-staging-control.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         control.preflight()
-        if control.capture("systemctl", "is-active", "beelink-staging.service") != "active":
+        if control.capture("systemctl", "is-active", "beelink-production.service") != "active":
             raise RuntimeError("Managed isolated staging must be active")
         WORK.mkdir(mode=0o700, exist_ok=True)
         reconcile(args.snapshots)

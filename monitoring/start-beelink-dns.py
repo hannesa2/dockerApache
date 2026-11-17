@@ -16,7 +16,7 @@ SPEC = importlib.util.spec_from_file_location(
 apps = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(apps)
 WORK = apps.RUNTIME / "dns"
-COMPOSE = ["docker", "compose", "-p", "beelink-dns-test", "-f", str(WORK / "compose.json")]
+COMPOSE = ["docker", "compose", "-p", "beelink-dns", "-f", str(WORK / "compose.json")]
 IPV4 = "192.168.178.142"
 IPV6 = "fdf4:be15:98e0:0:7a55:36ff:fe0e:d07e"
 DOMAINS = ("www.mxtracks.info", "dev.mxtracks.info", "git.mxtracks.info",
@@ -130,10 +130,10 @@ def corefile():
 
 def compose_config(image):
     return {
-        "name": "beelink-dns-test",
+        "name": "beelink-dns",
         "services": {"dns": {
             "image": image, "user": "0:0", "restart": "no", "read_only": True,
-            "networks": ["dns_test"],
+            "networks": ["resolver"],
             "command": ["-conf", "/Corefile"],
             "volumes": [
                 apps.mount(WORK / "Corefile", "/Corefile", True),
@@ -141,7 +141,7 @@ def compose_config(image):
                            "/etc/letsencrypt", True),
             ],
         }},
-        "networks": {"dns_test": {"driver": "bridge"}},
+        "networks": {"resolver": {"driver": "bridge"}},
     }
 
 
@@ -165,10 +165,10 @@ def verify():
     apps.run(*COMPOSE, "up", "-d", "--pull", "never")
     container = apps.capture(*COMPOSE, "ps", "--quiet", "dns")
     ip = apps.capture("docker", "inspect", "--format",
-                      '{{(index .NetworkSettings.Networks "beelink-dns-test_dns_test").IPAddress}}',
+                      '{{(index .NetworkSettings.Networks "beelink-dns_resolver").IPAddress}}',
                       container)
     ipaddress.IPv4Address(ip)
-    apps.run("docker", "run", "--rm", "--network", "beelink-dns-test_dns_test",
+    apps.run("docker", "run", "--rm", "--network", "beelink-dns_resolver",
              "--read-only", "--entrypoint", "python",
              "local/github-artifacts:server-relocation", "-c", PROBE, ip, IPV4, IPV6,
              DOT_HOST, json.dumps(DOMAINS), json.dumps(MIRRORS))

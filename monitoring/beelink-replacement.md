@@ -1415,6 +1415,67 @@ check settled, `beelink-job-status --health-json` returned an empty failures
 list and systemd reported zero failed units. This confirms boot recovery,
 not the future overnight scheduled executions; no mirror jobs were rerun.
 
+### Production naming correction (applied)
+
+The corrected retry completed on 2026-11-17 around 22:25. Live inspection
+confirmed the renamed production containers running, GitLab healthy,
+`beelink-production.service` active and boot-enabled, both public sockets
+active, all eight timers scheduled, an empty health failures list and no
+failed systemd units. Home Assistant and the original camera database retained
+their pre-migration uptime. The subsequent reboot at 22:29:33 was verified:
+production startup completed at 22:31:42 and both public sockets opened
+automatically. All renamed containers recovered, GitLab became healthy,
+the live health failures list was empty and systemd had no failed units.
+The upcoming overnight scheduled jobs have not yet been verified.
+
+The first attempt on 2026-11-17 rolled back: the health check incorrectly
+required the certificate timer while the migration itself had paused it.
+At 22:17, live health was clean, the original names/boot service were restored,
+and all eight schedules were active again. The corrected helper excludes only
+exact inactive-timer failures for timers it deliberately paused, in both the
+forward and rollback checks. It then resumes and checks every captured timer
+and repeats the full, unfiltered health check before recording completion.
+Regression coverage now exercises the real health-check function in both the
+successful transition and rollback, including a paused certificate timer.
+The corrected helper was deployed and used for the successful retry.
+
+`monitoring/rename-beelink-production.py --apply` replaces the misleading live
+Compose project/container names: `beelink-staging` becomes `beelink-databases`,
+`beelink-app-test` becomes `beelink-apps`, and `-test` is removed from the
+WordPress, Matomo, artifacts, DNS and frontend project names. The Java project,
+Home Assistant and original camera PostgreSQL names remain unchanged.
+The lifecycle unit becomes `beelink-production.service`; dependencies,
+root-installed helpers, backup/mirror scripts, health checks and frontend/
+database hostname configurations are migrated together.
+
+Run directly on beelink with interactive sudo:
+
+```bash
+sudo python3 ~/git/dockerApache/monitoring/rename-beelink-production.py --apply
+```
+
+Expect a few minutes of application downtime, including GitLab readiness.
+The helper refuses active backup/renewal operations, pauses the eight timers,
+creates a private rollback inventory under
+`/var/backups/beelink-production-names/`, stops only managed containers,
+and recreates them under their correct Compose projects. Images are neither
+pulled nor rebuilt; no database dumps are imported and no mirror jobs rerun.
+The renamed internal network keeps subnet/gateway `172.19.0.0/16` /
+`172.19.0.1` explicitly pinned in both database Compose snapshots, preserving
+frontend `172.19.0.15` and Home Assistant trust. Socket boot-order drop-ins
+remain intact. Live TLS/HTTP health, protected-container identity and all
+bind mounts must match before success is recorded in
+`/daten/beelink-runtime/production-names.json`. On failure the helper attempts
+to restore the previous configuration/names; schedules stay paused if
+recovery does not complete.
+
+Existing data paths such as `/daten/beelink-staging`, installed helper paths
+under `/usr/local/libexec/beelink-staging`, and the shared lifecycle lock
+retain their historical names intentionally: they are persistent references,
+not disposable test data. The initial isolated database restore tool is
+fenced against rerunning its old project on the now-production directories.
+The change required an interactive root invocation on beelink.
+
 All mirror sources then become beelink. Both health monitors must check only
 beelink and mac2016, including storage, all migrated services, source job
 reports and notification delivery. Preserve the mac2016 cron HOME/PATH.

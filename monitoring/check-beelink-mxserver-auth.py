@@ -88,7 +88,7 @@ def capture(*args):
 
 def inspect_target():
     control.preflight()
-    if capture("systemctl", "is-active", "beelink-staging.service") != "active":
+    if capture("systemctl", "is-active", "beelink-production.service") != "active":
         raise RuntimeError("Managed isolated staging service is not active")
     if not KEYFILE.is_file() or KEYFILE.is_symlink():
         raise RuntimeError("Expected private isolated GlassFish file-realm keyfile")
@@ -123,12 +123,12 @@ def inspect_target():
     details = json.loads(capture("docker", "inspect", CONTAINER))[0]
     if (details["HostConfig"]["RestartPolicy"]["Name"] != "no"
             or details["HostConfig"].get("PortBindings")
-            or set(details["NetworkSettings"]["Networks"]) != {"beelink-staging_isolated"}
+            or set(details["NetworkSettings"]["Networks"]) != {"beelink-databases_isolated"}
             or not details["State"]["Running"]):
         raise RuntimeError("MXServer must remain in the isolated non-restarting test container")
     frontend = json.loads(capture(
-        "docker", "inspect", "beelink-frontend-test-frontend-1"))[0]
-    return frontend["NetworkSettings"]["Networks"]["beelink-staging_isolated"]["IPAddress"]
+        "docker", "inspect", "beelink-frontend-frontend-1"))[0]
+    return frontend["NetworkSettings"]["Networks"]["beelink-databases_isolated"]["IPAddress"]
 
 
 def api_request(ip, username=None, secret=None):

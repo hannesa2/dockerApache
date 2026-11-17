@@ -106,7 +106,7 @@ class MirrorSourceTest(unittest.TestCase):
         result = self.run_sync(BEELINK_PRODUCTION="1")
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = self.calls()
-        self.assertIn("beelink-staging-mxserver-1 pg_dump -U beelink_restore", calls)
+        self.assertIn("beelink-databases-mxserver-1 pg_dump -U beelink_restore", calls)
         self.assertIn("HostKeyAlias=mac2016", calls)
         self.assertIn("hannes@192.168.178.70", calls)
         self.assertNotIn("native -u postgres", calls)

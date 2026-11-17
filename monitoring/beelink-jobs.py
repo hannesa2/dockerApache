@@ -34,7 +34,7 @@ SSH_OPTIONS = [
     "-o", "UserKnownHostsFile=/home/hannes/.ssh/known_hosts",
 ]
 MIRROR = "hannes@192.168.178.70"
-PG = ("beelink-staging-mxserver-1", "beelink-staging-owncloud-1",
+PG = ("beelink-databases-mxserver-1", "beelink-databases-owncloud-1",
       "camera-postgres-db-1")
 
 
@@ -60,7 +60,7 @@ def guard():
         raise RuntimeError("Expected encrypted T7 is not mounted")
     if RUNTIME.is_symlink() or RUNTIME.stat().st_uid != 0 or RUNTIME.stat().st_mode & 0o077:
         raise RuntimeError("Expected private root-owned runtime")
-    run("systemctl", "is-active", "--quiet", "beelink-staging.service")
+    run("systemctl", "is-active", "--quiet", "beelink-production.service")
 
 
 def environment():
@@ -83,12 +83,12 @@ def local_health():
     except Exception as error:
         failures.append(str(error))
     for container in (
-            *PG, "beelink-staging-native-mysql-1", "beelink-staging-apache-mysql-1",
-            "beelink-app-test-owncloud-app-1", "beelink-app-test-redis-1",
-            "beelink-app-test-gitlab-1", "beelink-wordpress-test-apache-1",
+            *PG, "beelink-databases-native-mysql-1", "beelink-databases-apache-mysql-1",
+            "beelink-apps-owncloud-app-1", "beelink-apps-redis-1",
+            "beelink-apps-gitlab-1", "beelink-wordpress-apache-1",
             "beelink-java-web-glassfish-1", "beelink-java-web-wildfly-1",
-            "beelink-matomo-test-matomo-1", "beelink-artifacts-test-artifacts-1",
-            "beelink-dns-test-dns-1", "beelink-frontend-test-frontend-1", "homeassistant"):
+            "beelink-matomo-matomo-1", "beelink-artifacts-artifacts-1",
+            "beelink-dns-dns-1", "beelink-frontend-frontend-1", "homeassistant"):
         try:
             status = json.loads(capture("docker", "inspect", container))[0]["State"]
             if not status["Running"] or status.get("Health", {}).get("Status", "healthy") != "healthy":
@@ -128,7 +128,7 @@ def local_health():
             failures.append(name + ": " + report["result"])
         elif now.timestamp() - dt.datetime.fromisoformat(report["finished"]).timestamp() > 30 * 3600:
             failures.append("Last successful run over 30 hours ago: " + name)
-    for unit in ("beelink-staging.service", "beelink-certificates.timer", "beelink-public-web-80.socket",
+    for unit in ("beelink-production.service", "beelink-certificates.timer", "beelink-public-web-80.socket",
                  "beelink-public-web-443.socket"):
         if subprocess.run(["systemctl", "is-active", "--quiet", unit]).returncode:
             failures.append("Inactive unit: " + unit)
@@ -161,7 +161,7 @@ for c in apache-apache-1 apache-db-1 apache-owncloud-db-1 apache-mxserver-db-1 g
     test "$(docker inspect -f '{{.State.Running}}' "$c")" = true
 done
 """)
-    source_version = capture("docker", "exec", "beelink-app-test-gitlab-1", "cat",
+    source_version = capture("docker", "exec", "beelink-apps-gitlab-1", "cat",
                              "/opt/gitlab/embedded/service/gitlab-rails/VERSION")
     mirror_version = remote(
         "docker exec gitlab16 cat /opt/gitlab/embedded/service/gitlab-rails/VERSION",
@@ -175,7 +175,7 @@ done
 
 
 def gitlab():
-    container = "beelink-app-test-gitlab-1"
+    container = "beelink-apps-gitlab-1"
     pending = STATE / "gitlab-pending-id"
     version = capture("docker", "exec", container, "cat",
                       "/opt/gitlab/embedded/service/gitlab-rails/VERSION")
@@ -228,7 +228,7 @@ def wordpress():
                f" > {backup}/database.sql; "
                f"cp {target}/wordpress/wp-config.php {backup}/wp-config.php")
         with tempfile.TemporaryFile() as dump:
-            run("docker", "exec", "beelink-staging-native-mysql-1", "mysqldump",
+            run("docker", "exec", "beelink-databases-native-mysql-1", "mysqldump",
                 "--defaults-extra-file=/run/restore-client.cnf",
                 "--single-transaction", "--no-tablespaces", "--hex-blob", schema, stdout=dump)
             remote(f"printf '%s\\n' '<?php $upgrading = time();' > {target}/wordpress/.maintenance")

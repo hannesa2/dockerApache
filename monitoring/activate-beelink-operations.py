@@ -39,7 +39,7 @@ After=systemd-cryptsetup@beelink\\x2dt7.service
 """,
         NAME + ".service": """[Unit]
 Description=Verify beelink mirror jobs sequentially after cutover
-After=beelink-staging.service
+After=beelink-production.service
 
 [Service]
 Type=oneshot
@@ -120,13 +120,13 @@ def prepare():
     shutil.copyfile(Path(__file__), target)
     target.chmod(0o700)
     run("systemctl", "daemon-reload")
-    run("systemd-analyze", "verify", "beelink-staging.service",
+    run("systemd-analyze", "verify", "beelink-production.service",
         "beelink-public-web-80.socket", "beelink-public-web-443.socket",
         NAME + ".service", env={
             **os.environ, "SYSTEMD_UNIT_PATH":
             "/etc/systemd/system:/run/systemd/generator.early:"
             "/run/systemd/generator:/run/systemd/generator.late:"})
-    run("systemctl", "enable", "beelink-staging.service")
+    run("systemctl", "enable", "beelink-production.service")
     run("systemctl", "add-wants", "multi-user.target",
         "beelink-public-web-80.socket", "beelink-public-web-443.socket")
     run("systemctl", "start", "--no-block", NAME + ".service")

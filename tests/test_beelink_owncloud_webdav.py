@@ -161,7 +161,7 @@ class BeelinkWebDAVTest(unittest.TestCase):
             with patch.object(DAV, "PENDING", marker), \
                     patch.object(DAV.control, "preflight"), \
                     patch.object(DAV.control, "capture", side_effect=[
-                        "beelink-staging-owncloud-1", "owncloud_stage", "/mnt/data/files",
+                        "beelink-databases-owncloud-1", "owncloud_stage", "/mnt/data/files",
                         '{"installed":true}']):
                 with self.assertRaisesRegex(RuntimeError, "unfinished test account"):
                     DAV.check_target()

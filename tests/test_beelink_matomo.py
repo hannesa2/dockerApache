@@ -38,7 +38,7 @@ class BeelinkMatomoTest(unittest.TestCase):
                   '[General]\ntrusted_hosts[] = "production"\n'
                   'proxy_scheme_headers[] = "one"\nproxy_scheme_headers[] = "two"\n')
         result = MATOMO.patch_config(source)
-        self.assertIn('host = "beelink-staging-native-mysql-1"', result)
+        self.assertIn('host = "beelink-databases-native-mysql-1"', result)
         self.assertIn('password = "fixture"', result)
         self.assertNotIn('"production"', result)
         self.assertEqual(result.count("proxy_scheme_headers[]"), 2)

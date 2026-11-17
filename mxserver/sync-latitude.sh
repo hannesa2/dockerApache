@@ -32,7 +32,7 @@ if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
     [[ "$(findmnt -rn -M /daten -t ext4 -o UUID)" == c0c42461-ae4c-4edb-a993-bba94a05ed6c ]] ||
         { echo "ERROR: Expected encrypted T7." >&2; exit 1; }
     SOURCE_KIND="docker"
-    SOURCE_CONTAINER="beelink-staging-mxserver-1"
+    SOURCE_CONTAINER="beelink-databases-mxserver-1"
     SOURCE_DB_USER="beelink_restore"
     SOURCE_PICTURES="/daten/beelink-runtime/rootfs/srv/postgres/data/mxinfo"
     SOURCE_KEYFILE="/daten/beelink-runtime/java-web/glassfish/glassfish/domains/domain1/config/keyfile"

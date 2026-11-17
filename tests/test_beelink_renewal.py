@@ -110,9 +110,9 @@ class BeelinkRenewalTest(unittest.TestCase):
         timer = definitions["beelink-certificates.timer"]
         self.assertIn("BindsTo=daten.mount", service)
         self.assertIn("ConditionPathIsMountPoint=/daten", service)
-        self.assertIn("ExecCondition=/usr/bin/systemctl is-active --quiet beelink-staging", service)
+        self.assertIn("ExecCondition=/usr/bin/systemctl is-active --quiet beelink-production.service", service)
         self.assertIn("--restore-http", service)
-        self.assertNotIn("Requires=beelink-staging", service)
+        self.assertNotIn("Requires=beelink-production.service", service)
         self.assertIn("Persistent=true", timer)
         self.assertIn("OnCalendar=*-*-* 00,12:00:00", timer)
 
@@ -250,7 +250,7 @@ class BeelinkRenewalTest(unittest.TestCase):
         context = MagicMock()
         context.wrap_socket.return_value = FakeTLS()
         details = [{"NetworkSettings": {"Networks": {
-            "beelink-dns-test_dns_test": {"IPAddress": "172.20.0.2"}}}}]
+            "beelink-dns_resolver": {"IPAddress": "172.20.0.2"}}}}]
         with patch.object(RENEW, "LINEAGES", {"site": "www.mxtracks.info"}), \
                 patch.object(RENEW, "capture", return_value=json.dumps(details)), \
                 patch.object(RENEW.socket, "create_connection", return_value=MagicMock()), \

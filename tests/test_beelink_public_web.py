@@ -19,7 +19,7 @@ class PublicWebTest(unittest.TestCase):
         self.assertIn("ListenStream=[::]:443", listener)
         self.assertIn("BindIPv6Only=ipv6-only", listener)
         for text in definitions.values():
-            self.assertIn("BindsTo=beelink-staging.service daten.mount", text)
+            self.assertIn("BindsTo=beelink-production.service daten.mount", text)
             self.assertNotIn("WantedBy", text)
         self.assertIn("systemd-socket-proxyd 172.19.0.15:443", service)
         self.assertIn("DynamicUser=yes", service)

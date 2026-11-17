@@ -18,8 +18,8 @@ SPEC = importlib.util.spec_from_file_location(
 apps = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(apps)
 WORK = apps.RUNTIME / "wordpress"
-DATABASE = "beelink-staging-native-mysql-1"
-COMPOSE = ["docker", "compose", "-p", "beelink-wordpress-test",
+DATABASE = "beelink-databases-native-mysql-1"
+COMPOSE = ["docker", "compose", "-p", "beelink-wordpress",
            "-f", str(WORK / "compose.json")]
 SITES = (
     ("dev.mxtracks.info", "dev.mxtracks", "wordpress"),
@@ -77,7 +77,7 @@ if (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') {
 
 def compose_config(image):
     return {
-        "name": "beelink-wordpress-test",
+        "name": "beelink-wordpress",
         "services": {"apache": {
             "image": image, "restart": "no", "networks": ["isolated"],
             "volumes": [
@@ -86,7 +86,7 @@ def compose_config(image):
                 apps.mount(WORK / "logs", "/var/log/apache2"),
             ],
         }},
-        "networks": {"isolated": {"external": True, "name": "beelink-staging_isolated"}},
+        "networks": {"isolated": {"external": True, "name": "beelink-databases_isolated"}},
     }
 
 
@@ -319,7 +319,7 @@ def main():
             or not (apps.RUNTIME / "java-web/java-web-report.json").is_file()):
         raise RuntimeError("Complete the private Java/web staging first")
     network = json.loads(apps.capture(
-        "docker", "network", "inspect", "beelink-staging_isolated"))[0]
+        "docker", "network", "inspect", "beelink-databases_isolated"))[0]
     if not network["Internal"]:
         raise RuntimeError("WordPress must remain on the internal test network")
     if shutil.disk_usage(apps.RUNTIME).free < 20 * 1024**3:

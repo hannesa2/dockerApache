@@ -21,10 +21,10 @@ DOMAINS = ("www.mxtracks.info", "dev.mxtracks.info", "git.mxtracks.info",
 
 def units(port, target):
     name = f"beelink-public-web-{port}"
-    dependencies = """Requires=beelink-staging.service
-After=beelink-staging.service daten.mount
-BindsTo=beelink-staging.service daten.mount
-PartOf=beelink-staging.service
+    dependencies = """Requires=beelink-production.service
+After=beelink-production.service daten.mount
+BindsTo=beelink-production.service daten.mount
+PartOf=beelink-production.service
 """
     return {
         name + ".socket": f"""[Unit]
@@ -76,7 +76,7 @@ def probe(address):
 
 def publish():
     control.preflight()
-    if control.capture("systemctl", "is-active", "beelink-staging.service") != "active":
+    if control.capture("systemctl", "is-active", "beelink-production.service") != "active":
         raise RuntimeError("Managed stacks must be active")
     for report in ("files-reconciliation-report.json", "certificates/prepared.json"):
         if not (control.RUNTIME / report).is_file():
@@ -84,8 +84,8 @@ def publish():
     settings = json.loads((control.RUNTIME / "frontend/homeassistant-proxy.json").read_text())
     target = settings["frontend_ip"]
     actual = control.capture("docker", "inspect", "--format",
-                             '{{(index .NetworkSettings.Networks "beelink-staging_isolated").IPAddress}}',
-                             "beelink-frontend-test-frontend-1")
+                             '{{(index .NetworkSettings.Networks "beelink-databases_isolated").IPAddress}}',
+                             "beelink-frontend-frontend-1")
     if target != actual:
         raise RuntimeError("Pinned frontend address changed")
     socket.inet_pton(socket.AF_INET, target)

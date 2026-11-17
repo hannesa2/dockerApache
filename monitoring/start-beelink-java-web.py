@@ -54,7 +54,7 @@ public class BeelinkJdbcProbe {
                 if (name.equals("url")) url = value;
             }
         }
-        if (matches != 1 || !"jdbc:postgresql://beelink-staging-mxserver-1:5432/MXServer".equals(url)) {
+        if (matches != 1 || !"jdbc:postgresql://beelink-databases-mxserver-1:5432/MXServer".equals(url)) {
             throw new IllegalStateException("Expected isolated MXServer JDBC configuration");
         }
         Class.forName("org.postgresql.Driver");
@@ -75,7 +75,7 @@ WORDPRESS_PATCH = r"""
 $path = $argv[1];
 $text = file_get_contents($path);
 $pattern = '/(define\s*\(\s*[\'"]DB_HOST[\'"]\s*,\s*)[\'"][^\'"]*[\'"]/';
-$text = preg_replace($pattern, '$1\'beelink-staging-apache-mysql-1\'', $text, -1, $count);
+$text = preg_replace($pattern, '$1\'beelink-databases-apache-mysql-1\'', $text, -1, $count);
 if ($count !== 1) {
     fwrite(STDERR, "Expected exactly one WordPress DB_HOST definition.\n");
     exit(1);
@@ -110,9 +110,9 @@ def patch_glassfish(path):
             raise RuntimeError("Missing MXServer JDBC property: " + key)
     if properties["databasename"].get("value") != "MXServer":
         raise RuntimeError("Unexpected MXServer database name")
-    properties["servername"].set("value", "beelink-staging-mxserver-1")
+    properties["servername"].set("value", "beelink-databases-mxserver-1")
     properties["portnumber"].set("value", "5432")
-    properties["url"].set("value", "jdbc:postgresql://beelink-staging-mxserver-1:5432/MXServer")
+    properties["url"].set("value", "jdbc:postgresql://beelink-databases-mxserver-1:5432/MXServer")
     temporary = path.with_suffix(".tmp")
     tree.write(temporary, encoding="utf-8", xml_declaration=True)
     shutil.copystat(path, temporary)
@@ -145,7 +145,7 @@ def compose_config(apache_image, apache_environment, java_images):
             },
             "apache": {
                 "image": apache_image, "restart": "no", "networks": ["isolated"],
-                "environment": dict(apache_environment, MYSQL_HOST="beelink-staging-apache-mysql-1"),
+                "environment": dict(apache_environment, MYSQL_HOST="beelink-databases-apache-mysql-1"),
                 "volumes": [
                     apps.mount(WORK / "www", "/var/www/html"),
                     apps.mount(WORK / "vhosts", "/etc/apache2/sites-enabled", True),
@@ -156,7 +156,7 @@ def compose_config(apache_image, apache_environment, java_images):
                 ],
             },
         },
-        "networks": {"isolated": {"external": True, "name": "beelink-staging_isolated"}},
+        "networks": {"isolated": {"external": True, "name": "beelink-databases_isolated"}},
     }
 
 
@@ -316,7 +316,7 @@ def main():
     if shutil.disk_usage(apps.RUNTIME).free < 50 * 1024**3:
         raise RuntimeError("At least 50 GiB free space is required")
     network = json.loads(apps.capture(
-        "docker", "network", "inspect", "beelink-staging_isolated"))[0]
+        "docker", "network", "inspect", "beelink-databases_isolated"))[0]
     if not network["Internal"]:
         raise RuntimeError("Staging network must remain isolated")
     if WORK.is_symlink():

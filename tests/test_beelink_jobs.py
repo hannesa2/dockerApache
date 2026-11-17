@@ -24,14 +24,14 @@ class BeelinkJobsTest(unittest.TestCase):
             service = definitions[f"beelink-job-{job}.service"]
             timer = definitions[f"beelink-job-{job}.timer"]
             self.assertIn(f"--run {job}", service)
-            self.assertNotIn("Requires=beelink-staging", service)
+            self.assertNotIn("Requires=beelink-databases", service)
             self.assertIn(f"OnCalendar=*-*-* {time}", timer)
             self.assertIn("Persistent=false", timer)
 
     def test_docker_sources_replace_frozen_native_sources(self):
         environment = JOBS.environment()
         self.assertEqual(environment["BEELINK_PRODUCTION"], "1")
-        self.assertEqual(environment["POSTGRES_OWNCLOUD_CONTAINER"], "beelink-staging-owncloud-1")
+        self.assertEqual(environment["POSTGRES_OWNCLOUD_CONTAINER"], "beelink-databases-owncloud-1")
         self.assertEqual(environment["POSTGRES_OWNCLOUD_USER"], "beelink_restore")
         self.assertIn("beelink-runtime/matomo", environment["MATOMO_SOURCE_DIR"])
 

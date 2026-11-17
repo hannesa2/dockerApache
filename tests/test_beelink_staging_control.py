@@ -17,7 +17,7 @@ SPEC.loader.exec_module(CONTROL)
 def config():
     return {"name": "project", "services": {
         "app": {"restart": "no", "networks": ["isolated"], "volumes": []}},
-        "networks": {"isolated": {"external": True, "name": "beelink-staging_isolated"}}}
+        "networks": {"isolated": {"external": True, "name": "beelink-databases_isolated"}}}
 
 
 class BeelinkStagingControlTest(unittest.TestCase):
@@ -183,7 +183,7 @@ class BeelinkStagingControlTest(unittest.TestCase):
                         else "old", "running": name != "beelink-java-web-apache-1"}
             def run(*args):
                 nonlocal restarted
-                self.assertEqual(args, ("systemctl", "restart", "beelink-staging.service"))
+                self.assertEqual(args, ("systemctl", "restart", "beelink-production.service"))
                 restarted = True
             with patch.object(CONTROL, "RUNTIME", Path(temporary)), \
                     patch.object(CONTROL, "STACKS", (("project", Path("/unused"), ("app",)),)), \
@@ -219,7 +219,7 @@ class BeelinkStagingControlTest(unittest.TestCase):
                          "start-beelink-frontend.py", "start-beelink-artifacts.py",
                          "start-beelink-dns.py"):
                 (source / name).write_text("# fixture\n")
-            unit = root / "beelink-staging.service"
+            unit = root / "beelink-production.service"
             library = root / "libexec"
             with patch.object(CONTROL, "__file__", str(source / "control-beelink-staging.py")), \
                     patch.object(CONTROL, "LIBEXEC", library), \
@@ -239,17 +239,17 @@ class BeelinkStagingControlTest(unittest.TestCase):
             self.assertFalse(any("enable" in call.args for call in run.call_args_list))
 
     def test_dns_network_exception_is_narrow_and_readonly(self):
-        candidate = {"name": "beelink-dns-test", "services": {"dns": {
-            "restart": "no", "networks": ["dns_test"], "read_only": True, "volumes": []}},
-            "networks": {"dns_test": {"driver": "bridge"}}}
-        CONTROL.validate_config("beelink-dns-test", candidate, ("dns",))
+        candidate = {"name": "beelink-dns", "services": {"dns": {
+            "restart": "no", "networks": ["resolver"], "read_only": True, "volumes": []}},
+            "networks": {"resolver": {"driver": "bridge"}}}
+        CONTROL.validate_config("beelink-dns", candidate, ("dns",))
         candidate["services"]["dns"]["read_only"] = False
         with self.assertRaisesRegex(RuntimeError, "read-only"):
-            CONTROL.validate_config("beelink-dns-test", candidate, ("dns",))
+            CONTROL.validate_config("beelink-dns", candidate, ("dns",))
         candidate["services"]["dns"]["read_only"] = True
-        candidate["networks"]["dns_test"]["external"] = True
+        candidate["networks"]["resolver"]["external"] = True
         with self.assertRaisesRegex(RuntimeError, "DNS network"):
-            CONTROL.validate_config("beelink-dns-test", candidate, ("dns",))
+            CONTROL.validate_config("beelink-dns", candidate, ("dns",))
 
 
 if __name__ == "__main__":

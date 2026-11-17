@@ -39,9 +39,9 @@ verify() {
     local file="$1" entries tables
     [[ -s "$file" ]] || fail "Empty dump: $file"
     if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
-        entries="$(docker exec -i beelink-staging-mxserver-1 pg_restore -l < "$file")" ||
+        entries="$(docker exec -i beelink-databases-mxserver-1 pg_restore -l < "$file")" ||
             fail "Cannot read archive: $file"
-        docker exec -i beelink-staging-mxserver-1 pg_restore -f /dev/null < "$file" ||
+        docker exec -i beelink-databases-mxserver-1 pg_restore -f /dev/null < "$file" ||
             fail "Cannot read all archive data: $file"
     else
         entries="$(pg_restore -l "$file")" || fail "Cannot read archive: $file"
@@ -59,7 +59,7 @@ for database in MXServer; do
         [[ "$(hostname -s)" == beelink &&
            "$(findmnt -rn -M /daten -t ext4 -o UUID)" == c0c42461-ae4c-4edb-a993-bba94a05ed6c ]] ||
             fail "Expected beelink encrypted T7."
-        docker exec beelink-staging-mxserver-1 pg_dump -U beelink_restore -d "$database" -Fc \
+        docker exec beelink-databases-mxserver-1 pg_dump -U beelink_restore -d "$database" -Fc \
             > "$staging/host-$database.dump"
         verify "$staging/host-$database.dump"
     else

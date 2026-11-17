@@ -27,7 +27,7 @@ class BeelinkWordPressTest(unittest.TestCase):
         for key in ("DISABLE_WP_CRON", "AUTOMATIC_UPDATER_DISABLED", "WP_HTTP_BLOCK_EXTERNAL"):
             self.assertIn(f"define('{key}', true);", result)
         self.assertIn("define('WP_ENVIRONMENT_TYPE', 'staging');", result)
-        self.assertIn("define('DB_HOST', 'beelink-staging-native-mysql-1');", result)
+        self.assertIn("define('DB_HOST', 'beelink-databases-native-mysql-1');", result)
         self.assertIn("define('DB_USER', 'wp_test_123');", result)
         self.assertIn("define('DB_PASSWORD', 'secret123');", result)
         self.assertIn("define('WP_HOME', 'https://dev.mxtracks.info/wordpress');", result)

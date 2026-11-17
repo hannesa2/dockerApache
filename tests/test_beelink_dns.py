@@ -15,7 +15,7 @@ class BeelinkDnsTest(unittest.TestCase):
         service = config["services"]["dns"]
         self.assertEqual(service["restart"], "no")
         self.assertTrue(service["read_only"])
-        self.assertEqual(service["networks"], ["dns_test"])
+        self.assertEqual(service["networks"], ["resolver"])
         for key in ("ports", "network_mode", "privileged"):
             self.assertNotIn(key, service)
         for mount in service["volumes"]:

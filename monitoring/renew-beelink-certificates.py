@@ -25,8 +25,8 @@ STATE = RUNTIME / "certificates"
 CONFIG = STATE / "etc/letsencrypt"
 SERVED = RUNTIME / "host-configuration/etc/letsencrypt"
 UUID = "c0c42461-ae4c-4edb-a993-bba94a05ed6c"
-FRONTEND = "beelink-frontend-test-frontend-1"
-DNS = "beelink-dns-test-dns-1"
+FRONTEND = "beelink-frontend-frontend-1"
+DNS = "beelink-dns-dns-1"
 LINEAGES = {
     "www.mxtracks.info": "www.mxtracks.info",
     "dev.mxtracks.info-0002": "dev.mxtracks.info",
@@ -67,7 +67,7 @@ def guard():
         raise RuntimeError("Expected encrypted T7 is not mounted")
     if RUNTIME.is_symlink() or RUNTIME.stat().st_uid != 0 or RUNTIME.stat().st_mode & 0o077:
         raise RuntimeError("Expected private root-owned runtime")
-    if not active("beelink-staging.service"):
+    if not active("beelink-production.service"):
         raise RuntimeError("Managed application stacks are not active")
 
 
@@ -171,9 +171,9 @@ def reload_consumers():
 def verify_served(expected):
     details = json.loads(capture("docker", "inspect", DNS))[0]
     networks = details["NetworkSettings"]["Networks"]
-    if set(networks) != {"beelink-dns-test_dns_test"}:
+    if set(networks) != {"beelink-dns_resolver"}:
         raise RuntimeError("Unexpected CoreDNS network")
-    dns_ip = networks["beelink-dns-test_dns_test"]["IPAddress"]
+    dns_ip = networks["beelink-dns_resolver"]["IPAddress"]
     for name, domain in LINEAGES.items():
         address = (dns_ip, 853) if domain == "nextcloud.mxtracks.info" else ("127.0.0.1", 443)
         for attempt in range(20):
@@ -345,14 +345,14 @@ def units():
     return {
         NAME + ".service": f"""[Unit]
 Description=Renew private beelink TLS certificates
-After=network-online.target docker.service beelink-staging.service daten.mount
+After=network-online.target docker.service beelink-production.service daten.mount
 BindsTo=daten.mount
 ConditionPathIsMountPoint=/daten
 
 [Service]
 Type=oneshot
 UMask=0077
-ExecCondition=/usr/bin/systemctl is-active --quiet beelink-staging.service
+ExecCondition=/usr/bin/systemctl is-active --quiet beelink-production.service
 ExecStart=/usr/bin/python3 {INSTALLED} --renew
 ExecStopPost=/usr/bin/python3 {INSTALLED} --restore-http
 TimeoutStartSec=30min

@@ -18,8 +18,8 @@ SPEC = importlib.util.spec_from_file_location(
     "beelink_control", Path(__file__).with_name("control-beelink-staging.py"))
 control = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(control)
-OWNCLOUD = "beelink-app-test-owncloud-app-1"
-CLIENT = "beelink-artifacts-test-artifacts-1"
+OWNCLOUD = "beelink-apps-owncloud-app-1"
+CLIENT = "beelink-artifacts-artifacts-1"
 OCC = ["docker", "exec", "--user", "www-data", OWNCLOUD, "occ"]
 PENDING = control.RUNTIME / "owncloud-webdav-pending.json"
 REPORT = control.RUNTIME / "owncloud-webdav-report.json"
@@ -92,7 +92,7 @@ def users(username):
 
 def check_target():
     control.preflight()
-    for key, expected in (("dbhost", "beelink-staging-owncloud-1"),
+    for key, expected in (("dbhost", "beelink-databases-owncloud-1"),
                           ("dbname", "owncloud_stage"),
                           ("datadirectory", "/mnt/data/files")):
         if control.capture(*OCC, "config:system:get", key) != expected:
@@ -103,8 +103,8 @@ def check_target():
     if PENDING.exists():
         raise RuntimeError("Inspect unfinished test account recorded in " + str(PENDING))
     frontend = json.loads(control.capture(
-        "docker", "inspect", "beelink-frontend-test-frontend-1"))[0]
-    return frontend["NetworkSettings"]["Networks"]["beelink-staging_isolated"]["IPAddress"]
+        "docker", "inspect", "beelink-frontend-frontend-1"))[0]
+    return frontend["NetworkSettings"]["Networks"]["beelink-databases_isolated"]["IPAddress"]
 
 
 def verify(ip):

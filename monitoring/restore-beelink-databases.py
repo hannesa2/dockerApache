@@ -166,9 +166,12 @@ def main():
 
 
 def restore(apache_mysql_image=None):
+    config_path = DESTINATION / "compose.json"
+    if config_path.exists() and json.loads(config_path.read_text()).get("name") != PROJECT:
+        raise RuntimeError("Database project has changed; initial restore must not be rerun "
+                           "against the production data directories")
     snapshots = SEED / "metadata/databases"
     verify_checksums(snapshots)
-    config_path = DESTINATION / "compose.json"
     state_path = DESTINATION / "database-state.json"
     if not config_path.exists():
         if state_path.exists() or any((DESTINATION / name).exists()

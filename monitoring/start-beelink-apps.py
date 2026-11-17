@@ -21,7 +21,7 @@ APPS = RUNTIME / "apps"
 ROOTFS = RUNTIME / "rootfs"
 GITLAB_IMAGE = "sha256:99dd108e798f1f2b04b70949104b29bedcdd79b252145c64d61d11aa5e58d552"
 OWNCLOUD_IMAGE = "owncloud/server:11.1.0"
-COMPOSE = ["docker", "compose", "-p", "beelink-app-test", "-f", str(APPS / "compose.json")]
+COMPOSE = ["docker", "compose", "-p", "beelink-apps", "-f", str(APPS / "compose.json")]
 
 OWNCLOUD_CONFIG = r"""<?php
 $CONFIG = [];
@@ -31,7 +31,7 @@ if (empty($CONFIG['installed']) || ($CONFIG['dbtype'] ?? '') !== 'pgsql'
     fwrite(STDERR, "Unexpected source ownCloud installation.\n");
     exit(1);
 }
-$CONFIG['dbhost'] = 'beelink-staging-owncloud-1';
+$CONFIG['dbhost'] = 'beelink-databases-owncloud-1';
 $CONFIG['datadirectory'] = '/mnt/data/files';
 $CONFIG['trusted_domains'] = ['localhost', '127.0.0.1', 'beelink'];
 $CONFIG['overwrite.cli.url'] = 'http://localhost';
@@ -98,7 +98,7 @@ def compose_config(owncloud_environment):
     environment.update({
         "OWNCLOUD_DOMAIN": "localhost",
         "OWNCLOUD_TRUSTED_DOMAINS": "localhost,127.0.0.1,beelink",
-        "OWNCLOUD_DB_HOST": "beelink-staging-owncloud-1",
+        "OWNCLOUD_DB_HOST": "beelink-databases-owncloud-1",
         "OWNCLOUD_REDIS_ENABLED": "true", "OWNCLOUD_REDIS_HOST": "redis",
         "OWNCLOUD_CROND_ENABLED": "false", "OWNCLOUD_BACKGROUND_MODE": "webcron",
         "OWNCLOUD_LOG_FILE": "/mnt/data/owncloud.log",
@@ -107,7 +107,7 @@ def compose_config(owncloud_environment):
         "OWNCLOUD_APPS_DISABLE": "", "OWNCLOUD_APPS_UNINSTALL": "",
     })
     return {
-        "name": "beelink-app-test",
+        "name": "beelink-apps",
         "services": {
             "redis": {
                 "image": "redis:7-alpine", "restart": "no", "networks": ["isolated"],
@@ -131,7 +131,7 @@ def compose_config(owncloud_environment):
                 ],
             },
         },
-        "networks": {"isolated": {"external": True, "name": "beelink-staging_isolated"}},
+        "networks": {"isolated": {"external": True, "name": "beelink-databases_isolated"}},
     }
 
 
@@ -310,7 +310,7 @@ def main():
         raise RuntimeError("Verify all isolated database restores first")
     if shutil.disk_usage(RUNTIME).free < 100 * 1024**3:
         raise RuntimeError("At least 100 GiB of free space is required for application staging")
-    network = json.loads(capture("docker", "network", "inspect", "beelink-staging_isolated"))[0]
+    network = json.loads(capture("docker", "network", "inspect", "beelink-databases_isolated"))[0]
     if not network["Internal"]:
         raise RuntimeError("Application network must be isolated from production and internet")
     if APPS.is_symlink():

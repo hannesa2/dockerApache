@@ -36,8 +36,8 @@ class BeelinkApplicationsTest(unittest.TestCase):
             "OWNCLOUD_DB_HOST": "production",
             "OWNCLOUD_CROND_ENABLED": "true",
         })
-        self.assertEqual(config["name"], "beelink-app-test")
-        self.assertEqual(config["networks"]["isolated"]["name"], "beelink-staging_isolated")
+        self.assertEqual(config["name"], "beelink-apps")
+        self.assertEqual(config["networks"]["isolated"]["name"], "beelink-databases_isolated")
         for service in config["services"].values():
             self.assertEqual(service["networks"], ["isolated"])
             self.assertEqual(service["restart"], "no")
@@ -51,7 +51,7 @@ class BeelinkApplicationsTest(unittest.TestCase):
         self.assertEqual(cloud["environment"]["OWNCLOUD_CROND_ENABLED"], "false")
         self.assertEqual(cloud["environment"]["OWNCLOUD_BACKGROUND_MODE"], "webcron")
         self.assertEqual(cloud["environment"]["OWNCLOUD_LOG_FILE"], "/mnt/data/owncloud.log")
-        self.assertEqual(cloud["environment"]["OWNCLOUD_DB_HOST"], "beelink-staging-owncloud-1")
+        self.assertEqual(cloud["environment"]["OWNCLOUD_DB_HOST"], "beelink-databases-owncloud-1")
         self.assertFalse(next(m for m in cloud["volumes"]
                               if m["target"] == "/mnt/data/files")["read_only"])
 

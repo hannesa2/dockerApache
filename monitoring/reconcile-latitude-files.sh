@@ -17,9 +17,9 @@ ssh_options=(-i /home/hannes/.ssh/id_rsa -o IdentitiesOnly=yes -o BatchMode=yes
 remote() { ssh -n "${ssh_options[@]}" hannes@beelink "$@"; }
 rsync_shell="ssh ${ssh_options[*]}"
 worker=beelink-file-reconcile
-apps=(beelink-app-test-owncloud-app-1 beelink-wordpress-test-apache-1
-    beelink-matomo-test-matomo-1 beelink-java-web-glassfish-1
-    beelink-java-web-wildfly-1 beelink-artifacts-test-artifacts-1)
+apps=(beelink-apps-owncloud-app-1 beelink-wordpress-apache-1
+    beelink-matomo-matomo-1 beelink-java-web-glassfish-1
+    beelink-java-web-wildfly-1 beelink-artifacts-artifacts-1)
 for service in apache2 php8.3-fpm php8.4-fpm glassfish wildfly; do
     [[ "$(systemctl show "$service" -p ActiveState --value)" == inactive ]] ||
         fail "Source writer must be inactive: $service"
@@ -37,24 +37,24 @@ import json, subprocess
 def out(*args):
     return subprocess.check_output(args, text=True).strip()
 assert out('findmnt','-rn','-M','/daten','-t','ext4','-o','UUID') == 'c0c42461-ae4c-4edb-a993-bba94a05ed6c'
-assert out('systemctl','is-active','beelink-staging.service') == 'active'
+assert out('systemctl','is-active','beelink-production.service') == 'active'
 expected = {
- 'beelink-app-test-owncloud-app-1': {
+ 'beelink-apps-owncloud-app-1': {
   '/mnt/data/files':'/daten/beelink-runtime/rootfs/daten/owncloud/data',
   '/mnt/data':'/daten/beelink-runtime/apps/owncloud/volume'},
- 'beelink-wordpress-test-apache-1': {'/var/www/html':'/daten/beelink-runtime/wordpress/www'},
- 'beelink-matomo-test-matomo-1': {'/var/www/html':'/daten/beelink-runtime/matomo/www'},
+ 'beelink-wordpress-apache-1': {'/var/www/html':'/daten/beelink-runtime/wordpress/www'},
+ 'beelink-matomo-matomo-1': {'/var/www/html':'/daten/beelink-runtime/matomo/www'},
  'beelink-java-web-glassfish-1': {
   '/srv/postgres/data/mxinfo':'/daten/beelink-runtime/rootfs/srv/postgres/data/mxinfo'},
- 'beelink-artifacts-test-artifacts-1': {'/app/files':'/daten/beelink-runtime/artifacts/files'}}
+ 'beelink-artifacts-artifacts-1': {'/app/files':'/daten/beelink-runtime/artifacts/files'}}
 for name, mounts in expected.items():
     c=json.loads(out('docker','inspect',name))[0]
     assert not c['HostConfig'].get('PortBindings'), name
     assert c['HostConfig']['RestartPolicy']['Name'] == 'no', name
-    assert set(c['NetworkSettings']['Networks']) == {'beelink-staging_isolated'}, name
+    assert set(c['NetworkSettings']['Networks']) == {'beelink-databases_isolated'}, name
     actual={m['Destination']:m['Source'] for m in c['Mounts']}
     assert all(actual.get(k)==v for k,v in mounts.items()), name
-assert out('docker','exec','beelink-wordpress-test-apache-1','wp','--allow-root',
+assert out('docker','exec','beelink-wordpress-apache-1','wp','--allow-root',
     '--path=/var/www/html/mxdocs/wordpress','--skip-plugins','--skip-themes',
     'core','version') == '6.9.11'
 assert not out('docker','ps','-aq','--filter','name=^/beelink-file-reconcile$')
@@ -96,14 +96,14 @@ os.umask(0o077)
 root=Path('/daten/latitude-migration/cutover-20261117')
 assert not (root/'files-sync-complete.json').exists(), 'Files already synchronized; inspect before repeating.'
 protected={}
-for name in ('homeassistant','camera-postgres-db-1','beelink-app-test-gitlab-1'):
+for name in ('homeassistant','camera-postgres-db-1','beelink-apps-gitlab-1'):
     c=json.loads(subprocess.check_output(['docker','inspect',name]))[0]
     assert c['State']['Running'], name
     protected[name]={'id':c['Id'],'started':c['State']['StartedAt'],'running':True}
 with (root/'files-sync-pending.json').open('x') as stream:
     json.dump({'protected':protected},stream)
 PY"
-remote "docker stop beelink-frontend-test-frontend-1 ${apps[*]}"
+remote "docker stop beelink-frontend-frontend-1 ${apps[*]}"
 
 sync_tree() {
     local source="$1" destination="$2"

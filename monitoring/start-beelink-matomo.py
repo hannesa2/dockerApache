@@ -19,7 +19,7 @@ SPEC = importlib.util.spec_from_file_location(
 apps = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(apps)
 WORK = apps.RUNTIME / "matomo"
-COMPOSE = ["docker", "compose", "-p", "beelink-matomo-test", "-f", str(WORK / "compose.json")]
+COMPOSE = ["docker", "compose", "-p", "beelink-matomo", "-f", str(WORK / "compose.json")]
 
 
 def patch_config(text, username=None, password=None):
@@ -27,7 +27,7 @@ def patch_config(text, username=None, password=None):
     if not database or not re.search(r'(?m)^dbname\s*=\s*"piwik_db"\s*$', database.group()):
         raise RuntimeError("Expected production Matomo piwik_db configuration")
     updated, count = re.subn(
-        r'(?m)^host\s*=.*$', 'host = "beelink-staging-native-mysql-1"', database.group())
+        r'(?m)^host\s*=.*$', 'host = "beelink-databases-native-mysql-1"', database.group())
     if count != 1:
         raise RuntimeError("Expected one Matomo database host")
     if username is not None:
@@ -48,7 +48,7 @@ def patch_config(text, username=None, password=None):
 
 def compose_config(image):
     return {
-        "name": "beelink-matomo-test",
+        "name": "beelink-matomo",
         "services": {"matomo": {
             "image": image, "restart": "no", "networks": ["isolated"],
             "volumes": [
@@ -57,7 +57,7 @@ def compose_config(image):
                 apps.mount(WORK / "logs", "/var/log/apache2"),
             ],
         }},
-        "networks": {"isolated": {"external": True, "name": "beelink-staging_isolated"}},
+        "networks": {"isolated": {"external": True, "name": "beelink-databases_isolated"}},
     }
 
 
@@ -102,7 +102,7 @@ def prepare(image):
 """)
     # Native piwik@localhost cannot authenticate from another container.
     # Add a new schema-scoped test account without altering production users.
-    apps.run("docker", "exec", "-i", "beelink-staging-native-mysql-1", "mysql",
+    apps.run("docker", "exec", "-i", "beelink-databases-native-mysql-1", "mysql",
              "--defaults-file=/run/restore-client.cnf", "--protocol=socket",
              input=f"CREATE USER '{username}'@'%' IDENTIFIED BY '{password}';\n"
              f"GRANT ALL PRIVILEGES ON `piwik_db`.* TO '{username}'@'%';\n", text=True)
@@ -131,7 +131,7 @@ def verify():
     php = r"""
 $config = parse_ini_file('/var/www/html/piwik/config/config.ini.php', true);
 $d = $config['database'];
-if ($d['host'] !== 'beelink-staging-native-mysql-1' || $d['dbname'] !== 'piwik_db') {
+if ($d['host'] !== 'beelink-databases-native-mysql-1' || $d['dbname'] !== 'piwik_db') {
     throw new Exception('Expected isolated Matomo database');
 }
 if (!preg_match('/^[a-zA-Z0-9_]+$/D', $d['tables_prefix'])) {
@@ -173,7 +173,7 @@ def main():
             or not (apps.RUNTIME / "java-web/java-web-report.json").is_file()):
         raise RuntimeError("Complete the private Java/web staging first")
     network = json.loads(apps.capture(
-        "docker", "network", "inspect", "beelink-staging_isolated"))[0]
+        "docker", "network", "inspect", "beelink-databases_isolated"))[0]
     if not network["Internal"]:
         raise RuntimeError("Matomo must remain on the internal test network")
     if shutil.disk_usage(apps.RUNTIME).free < 20 * 1024**3:

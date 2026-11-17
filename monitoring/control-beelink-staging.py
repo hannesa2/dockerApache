@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Control only the isolated migration stacks with a fail-closed T7 mount guard."""
+"""Control beelink production stacks with a fail-closed T7 mount guard."""
 
 import argparse
 import fcntl
@@ -15,21 +15,21 @@ import time
 UUID = "c0c42461-ae4c-4edb-a993-bba94a05ed6c"
 RUNTIME = Path("/daten/beelink-runtime")
 LIBEXEC = Path("/usr/local/libexec/beelink-staging")
-UNIT = Path("/etc/systemd/system/beelink-staging.service")
+UNIT = Path("/etc/systemd/system/beelink-production.service")
 DATABASE_SOURCE = Path("/daten/beelink-staging/compose.json")
 STACKS = (
-    ("beelink-staging", RUNTIME / "database-compose.json",
+    ("beelink-databases", RUNTIME / "database-compose.json",
      ("mxserver", "cameras", "owncloud", "apache-mysql", "native-mysql")),
-    ("beelink-app-test", RUNTIME / "apps/compose.json", ("redis", "owncloud-app", "gitlab")),
+    ("beelink-apps", RUNTIME / "apps/compose.json", ("redis", "owncloud-app", "gitlab")),
     ("beelink-java-web", RUNTIME / "java-web/compose.json", ("glassfish", "wildfly")),
-    ("beelink-wordpress-test", RUNTIME / "wordpress/compose.json", ("apache",)),
-    ("beelink-matomo-test", RUNTIME / "matomo/compose.json", ("matomo",)),
-    ("beelink-artifacts-test", RUNTIME / "artifacts/compose.json", ("artifacts",)),
-    ("beelink-dns-test", RUNTIME / "dns/compose.json", ("dns",)),
-    ("beelink-frontend-test", RUNTIME / "frontend/compose.json", ("frontend",)),
+    ("beelink-wordpress", RUNTIME / "wordpress/compose.json", ("apache",)),
+    ("beelink-matomo", RUNTIME / "matomo/compose.json", ("matomo",)),
+    ("beelink-artifacts", RUNTIME / "artifacts/compose.json", ("artifacts",)),
+    ("beelink-dns", RUNTIME / "dns/compose.json", ("dns",)),
+    ("beelink-frontend", RUNTIME / "frontend/compose.json", ("frontend",)),
 )
 UNIT_TEXT = """[Unit]
-Description=Isolated beelink migration stacks (not production)
+Description=Beelink production applications and databases
 Requires=docker.service
 After=docker.service daten.mount
 BindsTo=daten.mount
@@ -65,8 +65,8 @@ def check_mount():
 
 
 def validate_config(project, config, services):
-    dns = project == "beelink-dns-test"
-    network_name = "dns_test" if dns else "isolated"
+    dns = project == "beelink-dns"
+    network_name = "resolver" if dns else "isolated"
     if config.get("name") != project:
         raise RuntimeError("Unexpected Compose project: " + project)
     if not set(services).issubset(config["services"]):
@@ -92,10 +92,10 @@ def validate_config(project, config, services):
         if not config["services"]["dns"].get("read_only") or any(
                 not mount.get("read_only") for mount in config["services"]["dns"]["volumes"]):
             raise RuntimeError("DNS filesystem and configuration must remain read-only")
-    elif project == "beelink-staging":
+    elif project == "beelink-databases":
         if network.get("internal") is not True:
             raise RuntimeError("Database network must be internal")
-    elif network.get("name") != "beelink-staging_isolated" or not network.get("external"):
+    elif network.get("name") != "beelink-databases_isolated" or not network.get("external"):
         raise RuntimeError("Unexpected staging network reference")
 
 
@@ -113,7 +113,7 @@ def preflight():
         if path.is_symlink() or path.stat().st_uid != 0:
             raise RuntimeError("Expected root-owned Compose configuration")
         validate_config(project, json.loads(path.read_text()), services)
-    network = json.loads(capture("docker", "network", "inspect", "beelink-staging_isolated"))[0]
+    network = json.loads(capture("docker", "network", "inspect", "beelink-databases_isolated"))[0]
     if not network["Internal"]:
         raise RuntimeError("Existing staging network is not internal")
     for project, _, services in STACKS:
@@ -123,13 +123,13 @@ def preflight():
             if (details["HostConfig"]["RestartPolicy"]["Name"] != "no"
                     or details["HostConfig"].get("PortBindings")
                     or set(details["NetworkSettings"]["Networks"]) != {
-                        "beelink-dns-test_dns_test" if project == "beelink-dns-test"
-                        else "beelink-staging_isolated"}):
+                        "beelink-dns_resolver" if project == "beelink-dns"
+                        else "beelink-databases_isolated"}):
                 raise RuntimeError("Existing container bypasses staging restrictions: " + name)
     dns_network = json.loads(capture("docker", "network", "inspect",
-                                     "beelink-dns-test_dns_test"))[0]
+                                     "beelink-dns_resolver"))[0]
     if dns_network["Driver"] != "bridge" or dns_network.get("Internal") or any(
-            item["Name"] != "beelink-dns-test-dns-1"
+            item["Name"] != "beelink-dns-dns-1"
             for item in dns_network.get("Containers", {}).values()):
         raise RuntimeError("DNS network must contain only the dedicated DNS test service")
     print("T7 UUID, private paths, bind mounts, internal network and restart policies checked.",
@@ -138,11 +138,11 @@ def preflight():
 
 def wait_databases(attempts=180):
     commands = [
-        ("beelink-staging-" + service + "-1",
+        ("beelink-databases-" + service + "-1",
          ("pg_isready", "-U", "beelink_restore", "-d", "postgres"))
         for service in ("mxserver", "cameras", "owncloud")
     ] + [
-        ("beelink-staging-" + service + "-1",
+        ("beelink-databases-" + service + "-1",
          ("mysql", "--defaults-file=/run/restore-client.cnf", "--protocol=socket",
           "--batch", "--skip-column-names", "-e", "SELECT 1"))
         for service in ("apache-mysql", "native-mysql")
@@ -176,16 +176,16 @@ def stop():
                 continue
             if details["State"]["Running"]:
                 run("docker", "stop", "--time", "60", container)
-    print("Only managed migration containers stopped; Home Assistant and existing camera DB retained.",
+    print("Only managed production containers stopped; Home Assistant and existing camera DB retained.",
           flush=True)
 
 
 def wait_applications(attempts=180):
     deadline = time.monotonic() + 600
     probes = [
-        ("beelink-app-test-gitlab-1", ("curl", "--fail", "--silent", "--max-time", "10",
+        ("beelink-apps-gitlab-1", ("curl", "--fail", "--silent", "--max-time", "10",
                                      "http://127.0.0.1/-/readiness")),
-        ("beelink-app-test-owncloud-app-1", ("curl", "--fail", "--silent", "--max-time", "10",
+        ("beelink-apps-owncloud-app-1", ("curl", "--fail", "--silent", "--max-time", "10",
                                            "http://127.0.0.1:8080/status.php")),
         ("beelink-java-web-glassfish-1", ("curl", "--fail", "--silent", "--max-time", "10",
                                         "http://127.0.0.1:8081/MXServer/")),
@@ -229,10 +229,10 @@ def start():
         run("/usr/bin/python3", str(helper), "--start-isolated")
         run("/usr/bin/python3", str(Path(__file__).with_name("start-beelink-dns.py")),
             "--start-isolated")
-        print("Managed isolated stacks started and TLS/download checks passed. Boot enablement unchanged.",
+        print("Managed production stacks started and TLS/download checks passed. Boot enablement unchanged.",
               flush=True)
     except BaseException:
-        print("ERROR: Staging startup failed; stopping only managed migration stacks.", flush=True)
+        print("ERROR: Production startup failed; stopping only managed production stacks.", flush=True)
         stop()
         raise
 
@@ -256,7 +256,7 @@ def install():
             shutil.copyfile(source, target)
         os.chown(target, 0, 0)
         target.chmod(0o644)
-    candidate = LIBEXEC / "beelink-staging.service"
+    candidate = LIBEXEC / "beelink-production.service"
     candidate.write_text(UNIT_TEXT)
     run("systemd-analyze", "verify", str(candidate), env={
         **os.environ,
@@ -301,7 +301,7 @@ def container_identity(name):
 
 
 def restart_test():
-    if capture("systemctl", "is-active", "beelink-staging.service") != "active":
+    if capture("systemctl", "is-active", "beelink-production.service") != "active":
         raise RuntimeError("Start the existing managed staging unit before testing its restart")
     protected = {name: container_identity(name)
                  for name in ("homeassistant", "camera-postgres-db-1")}
@@ -310,7 +310,7 @@ def restart_test():
     if not all(value["running"] for value in [*protected.values(), *before.values()]):
         raise RuntimeError("All managed and protected services must be running before restart test")
     print("Restarting only managed migration stacks; no reboot or T7 unmount.", flush=True)
-    run("systemctl", "restart", "beelink-staging.service")
+    run("systemctl", "restart", "beelink-production.service")
     for name, previous in protected.items():
         if container_identity(name) != previous:
             raise RuntimeError("Protected existing service changed during restart: " + name)
@@ -352,7 +352,7 @@ def main():
             install()
     # Release the installer lock before systemd starts the controller.
     if args.install_and_start:
-        run("systemctl", "start", "beelink-staging.service")
+        run("systemctl", "start", "beelink-production.service")
     elif args.install_and_restart_test:
         # A separate lock serializes tests without blocking ExecStop/ExecStart.
         with Path("/run/lock/beelink-staging-restart-test.lock").open("w") as lock:

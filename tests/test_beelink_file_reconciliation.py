@@ -54,7 +54,7 @@ class FileReconciliationTest(unittest.TestCase):
         (runtime / "database-reconciliation/report.json").write_text("{}")
         protected = {name: {"id": name, "started": "fixed", "running": True}
                      for name in ("homeassistant", "camera-postgres-db-1",
-                                  "beelink-app-test-gitlab-1")}
+                                  "beelink-apps-gitlab-1")}
         (transfer / "files-sync-complete.json").write_text(json.dumps({"protected": protected}))
         stack = contextlib.ExitStack()
         self.addCleanup(stack.close)
@@ -90,7 +90,7 @@ class FileReconciliationTest(unittest.TestCase):
             self.assertTrue(report["camera_reconciliation_pending"])
             FILES.artifacts.verify.assert_called_once()
             FILES.wordpress.verify.assert_called_once()
-            self.assertFalse(any("beelink-app-test-gitlab-1" in call.args
+            self.assertFalse(any("beelink-apps-gitlab-1" in call.args
                                  for call in run.call_args_list))
 
     def test_incomplete_transfer_blocks_all_app_startups(self):
@@ -109,7 +109,7 @@ class FileReconciliationTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Matomo check failed"):
                 FILES.verify()
             self.assertFalse(FILES.REPORT.exists())
-            run.assert_called_with("docker", "stop", "beelink-frontend-test-frontend-1")
+            run.assert_called_with("docker", "stop", "beelink-frontend-frontend-1")
 
     def test_running_sync_worker_blocks_all_mutations(self):
         with tempfile.TemporaryDirectory() as temporary:

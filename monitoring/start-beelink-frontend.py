@@ -19,13 +19,13 @@ apps = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(apps)
 WORK = apps.RUNTIME / "frontend"
 CERTIFICATES = apps.RUNTIME / "host-configuration/etc/letsencrypt"
-COMPOSE = ["docker", "compose", "-p", "beelink-frontend-test",
+COMPOSE = ["docker", "compose", "-p", "beelink-frontend",
            "-f", str(WORK / "compose.json")]
 HOMEASSISTANT_CONFIG = Path("/home/hannes/homeassistant/config/configuration.yaml")
 SITES = {
-    "www.mxtracks.info": ("www.mxtracks.info", "beelink-wordpress-test-apache-1"),
-    "dev.mxtracks.info": ("dev.mxtracks.info-0002", "beelink-wordpress-test-apache-1"),
-    "git.mxtracks.info": ("git.mxtracks.info-0001", "beelink-app-test-gitlab-1"),
+    "www.mxtracks.info": ("www.mxtracks.info", "beelink-wordpress-apache-1"),
+    "dev.mxtracks.info": ("dev.mxtracks.info-0002", "beelink-wordpress-apache-1"),
+    "git.mxtracks.info": ("git.mxtracks.info-0001", "beelink-apps-gitlab-1"),
     "homeassistant.mxtracks.info": ("homeassistant.mxtracks.info", None),
 }
 PENDING = (
@@ -37,7 +37,7 @@ OWNCLOUD_PROXY = r"""
 $path = '/mnt/data/config/config.php';
 $CONFIG = [];
 require $path;
-if (($CONFIG['dbhost'] ?? '') !== 'beelink-staging-owncloud-1'
+if (($CONFIG['dbhost'] ?? '') !== 'beelink-databases-owncloud-1'
     || ($CONFIG['dbname'] ?? '') !== 'owncloud_stage') {
     throw new Exception('Expected isolated ownCloud configuration');
 }
@@ -120,7 +120,7 @@ def blocked(path):
 def vhosts(homeassistant_gateway=None, legacy_copy_sites=False, artifacts=False):
     if homeassistant_gateway is not None:
         ipaddress.IPv4Address(homeassistant_gateway)
-    text = """ServerName beelink-frontend-test
+    text = """ServerName beelink-frontend
 SSLProtocol -all +TLSv1.2 +TLSv1.3
 SSLSessionCache shmcb:/var/run/apache2/ssl_scache(512000)
 ProxyRequests Off
@@ -173,12 +173,12 @@ ProxyRequests Off
         Header edit Location "^/$" "/github/"
     </LocationMatch>
 """
-                text += proxy("/github/", "http://beelink-artifacts-test-artifacts-1:5000/")
+                text += proxy("/github/", "http://beelink-artifacts-artifacts-1:5000/")
             text += "    ProxyPassMatch ^/owncloud$ !\n"
             text += "    RedirectMatch 301 ^/owncloud$ /owncloud/\n"
-            text += proxy("/owncloud/", "http://beelink-app-test-owncloud-app-1:8080/")
+            text += proxy("/owncloud/", "http://beelink-apps-owncloud-app-1:8080/")
             text += proxy("/backend/", "http://beelink-java-web-glassfish-1:8081/")
-            text += proxy("/piwik/", "http://beelink-matomo-test-matomo-1/piwik/")
+            text += proxy("/piwik/", "http://beelink-matomo-matomo-1/piwik/")
         if domain == "dev.mxtracks.info":
             text += blocked("/pi")
         if domain in ("www.mxtracks.info", "dev.mxtracks.info"):
@@ -244,7 +244,7 @@ def fix_path_redirects():
 
 def compose_config(image, frontend_ip=None):
     config = {
-        "name": "beelink-frontend-test",
+        "name": "beelink-frontend",
         "services": {"frontend": {
             "image": image, "restart": "no", "networks": ["isolated"],
             "volumes": [
@@ -253,7 +253,7 @@ def compose_config(image, frontend_ip=None):
                 apps.mount(WORK / "logs", "/var/log/apache2"),
             ],
         }},
-        "networks": {"isolated": {"external": True, "name": "beelink-staging_isolated"}},
+        "networks": {"isolated": {"external": True, "name": "beelink-databases_isolated"}},
     }
     if frontend_ip is not None:
         ipaddress.IPv4Address(frontend_ip)
@@ -299,10 +299,10 @@ def prepare(image, connect_homeassistant=False):
         if not container:
             raise RuntimeError("Start the existing test frontend before connecting Home Assistant")
         ip = apps.capture("docker", "inspect", "--format",
-                          '{{(index .NetworkSettings.Networks "beelink-staging_isolated").IPAddress}}',
+                          '{{(index .NetworkSettings.Networks "beelink-databases_isolated").IPAddress}}',
                           container)
         network = json.loads(apps.capture(
-            "docker", "network", "inspect", "beelink-staging_isolated"))[0]
+            "docker", "network", "inspect", "beelink-databases_isolated"))[0]
         if len(network["IPAM"]["Config"]) != 1:
             raise RuntimeError("Expected one isolated network subnet")
         subnet = network["IPAM"]["Config"][0]
@@ -406,7 +406,7 @@ def configure_homeassistant(settings, allow_restart):
 def matomo_proxy_config(text):
     database = re.search(r"(?ms)^\[database\]\s*\n.*?(?=^\[|\Z)", text)
     if not database or not re.search(
-            r'(?m)^host\s*=\s*"beelink-staging-native-mysql-1"\s*$', database.group()):
+            r'(?m)^host\s*=\s*"beelink-databases-native-mysql-1"\s*$', database.group()):
         raise RuntimeError("Expected isolated Matomo configuration")
     if len(re.findall(r"(?m)^\[General\]\s*$", text)) != 1:
         raise RuntimeError("Expected one Matomo General section")
@@ -446,7 +446,7 @@ def verify(connect_homeassistant=False):
     (apps.RUNTIME / "java-web/copy-sites-retired").touch()
     container = apps.capture(*COMPOSE, "ps", "--quiet", "frontend")
     ip = apps.capture("docker", "inspect", "--format",
-                      '{{(index .NetworkSettings.Networks "beelink-staging_isolated").IPAddress}}',
+                      '{{(index .NetworkSettings.Networks "beelink-databases_isolated").IPAddress}}',
                       container)
     ipaddress.ip_address(ip)
     settings = homeassistant_settings()
@@ -463,7 +463,7 @@ def verify(connect_homeassistant=False):
     if not backup.exists():
         backup.write_bytes(source.read_bytes())
         backup.chmod(0o600)
-    apps.run("docker", "exec", "--user", "www-data", "beelink-app-test-owncloud-app-1",
+    apps.run("docker", "exec", "--user", "www-data", "beelink-apps-owncloud-app-1",
              "php", "-r", OWNCLOUD_PROXY, "--", ip)
     configure_matomo()
     checks = [
@@ -540,7 +540,7 @@ def main():
             or not (apps.RUNTIME / "wordpress/wordpress-report.json").is_file()):
         raise RuntimeError("Complete original WordPress staging first")
     if not json.loads(apps.capture(
-            "docker", "network", "inspect", "beelink-staging_isolated"))[0]["Internal"]:
+            "docker", "network", "inspect", "beelink-databases_isolated"))[0]["Internal"]:
         raise RuntimeError("Frontend must remain on the internal test network")
     if WORK.is_symlink():
         raise RuntimeError("Frontend directory must not be a symlink")

@@ -21,7 +21,7 @@ SPEC = importlib.util.spec_from_file_location(
 control = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(control)
 WORK = control.RUNTIME / "apps"
-CONTAINER = "beelink-app-test-gitlab-1"
+CONTAINER = "beelink-apps-gitlab-1"
 PENDING = WORK / "gitlab-reconciliation-pending.json"
 REPORT = WORK / "gitlab-reconciliation-report.json"
 PROTECTED = ("homeassistant", "camera-postgres-db-1")
@@ -165,7 +165,7 @@ def main():
     with Path("/run/lock/beelink-staging-control.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         control.preflight()
-        if capture("systemctl", "is-active", "beelink-staging.service") != "active":
+        if capture("systemctl", "is-active", "beelink-production.service") != "active":
             raise RuntimeError("Managed isolated staging must be active")
         if not args.backup.resolve().is_relative_to("/daten/latitude-migration"):
             raise RuntimeError("Backup must be in the private migration transfer directory")
