@@ -4,7 +4,7 @@ export LC_ALL=C
 export LANG=C
 
 RECIPIENT="hannes.software@gmx.at"
-LATITUDE_HOST="latitude"
+PRIMARY_HOST="${PRIMARY_HOST:-beelink}"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/systems-health-monitor"
 STATE_FILE="$STATE_DIR/mac2016-failed-checks"
 LOCK_DIR="$STATE_DIR/mac2016-check.lock"
@@ -189,9 +189,22 @@ remote_output="$(
         -o ServerAliveInterval=10 \
         -o ServerAliveCountMax=2 \
         -o StrictHostKeyChecking=yes \
-        "$LATITUDE_HOST" /bin/bash -s <<'REMOTE'
+        "$PRIMARY_HOST" /bin/bash -s <<'REMOTE'
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 printf 'HOST|%s\n' "$(hostname)"
+if [[ "$(hostname -s)" == beelink ]]; then
+    set -o pipefail
+    python3 /usr/local/bin/beelink-job-status --health-json | python3 -c '
+import json,sys
+report=json.load(sys.stdin)
+failures=report["failures"]
+for failure in failures:
+    print("CHECK|FAIL|beelink health|" + failure.replace("\n", "; "))
+if not failures:
+    print("CHECK|OK|beelink health|containers, TLS, mount and job freshness checked")
+'
+    exit "$?"
+fi
 
 check_unit() {
     local unit="$1"
@@ -271,19 +284,19 @@ else
 fi
 REMOTE
 )" || {
-    record FAIL "Latitude SSH" "host is unreachable over SSH ($LATITUDE_HOST)"
+    record FAIL "Primary SSH" "host is unreachable over SSH ($PRIMARY_HOST)"
     remote_output=""
 }
 
 if [[ -n "$remote_output" ]]; then
-    record OK "Latitude SSH" "connected to $LATITUDE_HOST"
+    record OK "Primary SSH" "connected to $PRIMARY_HOST"
     while IFS='|' read -r kind result name detail; do
         case "$kind" in
             HOST)
-                if [[ "${result,,}" == latitude* ]]; then
-                    record OK "Latitude host identity" "$result"
+                if [[ "${result,,}" == "$PRIMARY_HOST"* ]]; then
+                    record OK "Primary host identity" "$result"
                 else
-                    record FAIL "Latitude host identity" "expected latitude; got $result"
+                    record FAIL "Primary host identity" "expected $PRIMARY_HOST; got $result"
                 fi
                 ;;
             CHECK)
@@ -295,9 +308,9 @@ fi
 
 sync_report="$(ssh -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
-    -o StrictHostKeyChecking=yes "$LATITUDE_HOST" \
-    'python3 /home/hannes/bin/sync-job-report.py' 2>&1)" ||
-    sync_report="ERROR: Latitude sync status unavailable: $sync_report"
+    -o StrictHostKeyChecking=yes "$PRIMARY_HOST" \
+    'python3 /usr/local/bin/beelink-job-status --report' 2>&1)" ||
+    sync_report="ERROR: Primary sync status unavailable: $sync_report"
 grep '^FAIL|' "$checks_file" | sort > "$current_failures"
 if [[ -f "$STATE_FILE" ]]; then
     cp "$STATE_FILE" "$previous_file"

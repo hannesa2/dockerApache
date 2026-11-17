@@ -676,6 +676,41 @@ terminates TLS using the existing www16 certificate; configure the router to
 forward public TCP 9433 to mac2016 port 9433. See `mxserver/README.md` for
 sync behavior and operations.
 
+### beelink: encrypted Samsung T7 at /daten
+
+The staged Latitude replacement procedure is documented in
+[`monitoring/beelink-replacement.md`](monitoring/beelink-replacement.md).
+An initial seed does not switch production, router forwarding or cron jobs.
+
+`monitoring/setup-beelink-t7.sh` prepares the specifically identified 2 TB
+Samsung T7 (serial `H758101R0JN7T5S`) as a whole-disk LUKS2/ext4 volume.
+**It destroys the previous contents.** Run directly on beelink:
+
+```bash
+cd ~/git/dockerApache
+sudo bash monitoring/setup-beelink-t7.sh --erase-confirmed-t7
+```
+
+The script refuses mounted devices, unexpected device identities, existing
+configuration or a nonempty `/daten`. The unlock key is root-only at
+`/etc/cryptsetup-keys.d/beelink-t7.key` on the encrypted system filesystem.
+This protects a detached T7, not against access from the running host.
+The existing system-drive unlock configuration is unchanged.
+
+UUID-based crypttab configuration uses `headless` (no password prompt) and
+short timeouts. The optional systemd automount makes a missing T7 nonfatal
+at boot; access to `/daten` can still fail if the drive is absent or broken.
+Do not unplug a mounted drive. Jobs writing there must verify
+`mountpoint -q /daten` first, rather than writing to the system disk on failure.
+`hannes` owns the mounted filesystem.
+
+Setup verifies automatic key-based reopening and a write/read operation.
+Verify a reboot with the drive connected and a boot with it disconnected
+separately. Logs, original fstab/crypttab and a LUKS header backup remain under
+`/root/beelink-t7-setup.*`. Back up the key and header securely off-host:
+there is no recovery passphrase, and loss of the key makes the data inaccessible.
+If setup fails, inspect the log and retained state instead of blindly rerunning.
+
 ### Backup & Restore
 
 ```bash

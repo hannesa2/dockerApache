@@ -18,8 +18,36 @@ SOURCE_COMPOSE="/home/hannes/git/dockerApache/owncloud/latitude-compose.yml"
 SOURCE_PROJECT="owncloud-staging"
 SOURCE_WEB="owncloud-staging-owncloud-1"
 SOURCE_DB="owncloud-staging-db-1"
+SOURCE_SERVICE="owncloud"
+SOURCE_DB_SERVICE="db"
+SOURCE_DB_USER="owncloud_stage"
+SOURCE_STATUS_URL="http://127.0.0.1:8093/status.php"
+SOURCE_STATUS_RESOLVE=()
+if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
+    [[ "$(hostname -s)" == beelink ]] || { echo "ERROR: Expected beelink." >&2; exit 1; }
+    [[ "$(findmnt -rn -M /daten -t ext4 -o UUID)" == c0c42461-ae4c-4edb-a993-bba94a05ed6c ]] ||
+        { echo "ERROR: Expected encrypted T7." >&2; exit 1; }
+    SOURCE_ROOT="/daten/beelink-runtime/apps/owncloud/volume"
+    SOURCE_DATA="/daten/beelink-runtime/rootfs/daten/owncloud/data"
+    SOURCE_APPS="$SOURCE_ROOT/apps"
+    SOURCE_CONFIG="$SOURCE_ROOT/config"
+    SOURCE_ENV="/dev/null"
+    SOURCE_COMPOSE="/daten/beelink-runtime/apps/compose.json"
+    SOURCE_PROJECT="beelink-app-test"
+    SOURCE_WEB="beelink-app-test-owncloud-app-1"
+    SOURCE_DB="beelink-staging-owncloud-1"
+    SOURCE_SERVICE="owncloud-app"
+    SOURCE_DB_USER="beelink_restore"
+    SOURCE_STATUS_URL="https://www.mxtracks.info/owncloud/status.php"
+    SOURCE_STATUS_RESOLVE=(--resolve www.mxtracks.info:443:127.0.0.1)
+fi
 
 MIRROR_HOST="mac2016"
+SSH_ALIAS=()
+if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
+    MIRROR_HOST="192.168.178.70"
+    SSH_ALIAS=(-o HostKeyAlias=mac2016)
+fi
 MIRROR_USER="hannes"
 MIRROR_REPO="/Users/hannes/git/dockerApache"
 MIRROR_ROOT="/Volumes/SamsungT5_1T/ownCloudBackup/owncloud"
@@ -49,6 +77,7 @@ die() {
 
 remote() {
     ssh -i "$SSH_KEY" \
+        "${SSH_ALIAS[@]}" \
         -o IdentitiesOnly=yes \
         -o BatchMode=yes \
         -o ConnectTimeout=15 \
@@ -65,6 +94,9 @@ remote_compose() {
 }
 
 RSYNC_SSH="ssh -i $SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KNOWN_HOSTS"
+if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
+    RSYNC_SSH="$RSYNC_SSH -o HostKeyAlias=mac2016"
+fi
 
 sync_data() {
     echo "Syncing ownCloud files to mac2016..."
@@ -108,6 +140,7 @@ sync_code() {
         --exclude=./data \
         -C /var/www/owncloud -cf - . |
         ssh -i "$SSH_KEY" \
+            "${SSH_ALIAS[@]}" \
             -o IdentitiesOnly=yes \
             -o BatchMode=yes \
             -o ConnectTimeout=15 \
@@ -138,14 +171,18 @@ source_compose() {
 }
 
 source_occ() {
-    source_compose exec -T --user www-data owncloud php /var/www/owncloud/occ "$@"
+    if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
+        docker exec --user www-data "$SOURCE_WEB" occ "$@"
+    else
+        source_compose exec -T --user www-data "$SOURCE_SERVICE" php /var/www/owncloud/occ "$@"
+    fi
 }
 
 wait_source_normal() {
     local attempt response
     for attempt in {1..60}; do
         if response="$(curl --noproxy '*' -fsS --max-time 5 \
-            http://127.0.0.1:8093/status.php 2>/dev/null)" &&
+            "${SOURCE_STATUS_RESOLVE[@]}" "$SOURCE_STATUS_URL" 2>/dev/null)" &&
             python3 -c '
 import json,sys
 s=json.load(sys.stdin)
@@ -197,12 +234,19 @@ for command_name in docker rsync ssh mountpoint findmnt curl python3; do
     command -v "$command_name" >/dev/null || die "Required command is missing: $command_name"
 done
 
-[[ -f "$SOURCE_COMPOSE" && -f "$SOURCE_ENV" ]] || die "Latitude Docker ownCloud Compose files are missing."
+[[ -f "$SOURCE_COMPOSE" ]] || die "Source ownCloud Compose file is missing."
+if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
+    [[ "$SOURCE_ENV" == /dev/null && -c "$SOURCE_ENV" && -r "$SOURCE_ENV" ]] ||
+        die "Expected readable empty beelink Compose environment."
+else
+    [[ -f "$SOURCE_ENV" && -r "$SOURCE_ENV" ]] ||
+        die "Source ownCloud environment file is missing or unreadable."
+fi
 [[ -d "$SOURCE_DATA" && -f "$SOURCE_DATA/.ocdata" ]] || die "Latitude Docker ownCloud data is unavailable."
 [[ -d "$SOURCE_APPS" && -d "$SOURCE_CONFIG" && -f "$SOURCE_CONFIG/config.php" ]] ||
     die "Latitude Docker ownCloud apps or config are unavailable."
 mountpoint -q /daten || die "/daten is not mounted."
-[[ "$(findmnt -n -o FSTYPE --target /daten)" == "ext4" ]] ||
+[[ "$(findmnt -rn -M /daten -t ext4 -o FSTYPE)" == "ext4" ]] ||
     die "Expected the internal production data disk to be ext4."
 
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -212,8 +256,13 @@ LOCK_ACQUIRED=1
 mkdir -p "$SOURCE_ROOT/backup"
 chmod 700 "$SOURCE_ROOT/backup"
 
-SOURCE_WEB_ID="$(source_compose ps -q owncloud)"
-SOURCE_DB_ID="$(source_compose ps -q db)"
+if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
+    SOURCE_WEB_ID="$(docker inspect -f '{{.Id}}' "$SOURCE_WEB")"
+    SOURCE_DB_ID="$(docker inspect -f '{{.Id}}' "$SOURCE_DB")"
+else
+    SOURCE_WEB_ID="$(source_compose ps -q owncloud)"
+    SOURCE_DB_ID="$(source_compose ps -q db)"
+fi
 [[ -n "$SOURCE_WEB_ID" && "$(docker inspect -f '{{.Name}}' "$SOURCE_WEB_ID" | sed 's#^/##')" == "$SOURCE_WEB" ]] ||
     die "The expected owncloud-staging web container is not running."
 [[ -n "$SOURCE_DB_ID" && "$(docker inspect -f '{{.Name}}' "$SOURCE_DB_ID" | sed 's#^/##')" == "$SOURCE_DB" ]] ||
@@ -222,18 +271,24 @@ SOURCE_DB_ID="$(source_compose ps -q db)"
     die "Production ownCloud is not from the expected Docker Compose project."
 [[ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/mnt/data/files"}}{{.Source}}{{end}}{{end}}' "$SOURCE_WEB_ID")" == "$SOURCE_DATA" ]] ||
     die "Production ownCloud is not using the expected internal data directory."
-[[ "$(docker inspect -f '{{.State.Health.Status}}' "$SOURCE_DB_ID")" == "healthy" ]] ||
-    die "Production ownCloud PostgreSQL is not healthy."
+if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
+    docker exec "$SOURCE_DB_ID" pg_isready -U "$SOURCE_DB_USER" -d owncloud_stage ||
+        die "Production ownCloud PostgreSQL is not ready."
+else
+    [[ "$(docker inspect -f '{{.State.Health.Status}}' "$SOURCE_DB_ID")" == "healthy" ]] ||
+        die "Production ownCloud PostgreSQL is not healthy."
+fi
 SOURCE_IMAGE_ID="$(docker inspect -f '{{.Image}}' "$SOURCE_WEB_ID")"
 [[ "$SOURCE_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] ||
     die "Could not determine the immutable production ownCloud image ID."
 SOURCE_VERSION="$(docker exec "$SOURCE_WEB_ID" grep -oE "OC_VersionString = '[0-9.]+" /var/www/owncloud/version.php | grep -oE '[0-9.]+$')"
 [[ "$SOURCE_VERSION" == "11.1.0" ]] ||
     die "Expected Docker production ownCloud 11.1.0, found ${SOURCE_VERSION:-unknown}."
-SOURCE_STATUS="$(curl -fsS --max-time 20 http://127.0.0.1:8093/status.php)" ||
+SOURCE_STATUS="$(curl -fsS --max-time 20 "${SOURCE_STATUS_RESOLVE[@]}" "$SOURCE_STATUS_URL")" ||
     die "Production ownCloud is not healthy on loopback."
 python3 -c 'import json,sys; s=json.loads(sys.argv[1]); assert s.get("installed") and s.get("versionstring") == "11.1.0" and not s.get("needsDbUpgrade") and not s.get("maintenance"), "Production ownCloud is not ready."' \
     "$SOURCE_STATUS" || die "Production ownCloud must be installed, upgraded, and out of maintenance mode."
+source_occ status || die "Source ownCloud CLI configuration is not ready; mirror unchanged."
 
 [[ -r "$SSH_KEY" && -r "$KNOWN_HOSTS" ]] ||
     die "Latitude-to-mac2016 SSH key or pinned known_hosts file is unavailable."
@@ -252,7 +307,11 @@ read -r REMOTE_RSYNC_MAJOR REMOTE_RSYNC_MINOR <<< "$REMOTE_RSYNC_VERSION"
 
 echo "Building the isolated ownCloud 11.1.0 mirror runtime on mac2016..."
 remote_compose "config --quiet"
-remote_compose "build --pull owncloud"
+if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
+    remote_compose "images owncloud"
+else
+    remote_compose "build --pull owncloud"
+fi
 remote_compose "config --format json" | python3 -c '
 import json,sys
 s=json.load(sys.stdin)["services"]["owncloud"]
@@ -292,8 +351,8 @@ sync_apps
 sync_config
 
 echo "Creating a restricted PostgreSQL snapshot from the production Docker database..."
-source_compose exec -T db pg_dump --format=custom --no-owner --no-privileges \
-    -U owncloud_stage -d owncloud_stage > "$SOURCE_DUMP"
+docker exec "$SOURCE_DB_ID" pg_dump --format=custom --no-owner --no-privileges \
+    -U "$SOURCE_DB_USER" -d owncloud_stage > "$SOURCE_DUMP"
 chmod 0600 "$SOURCE_DUMP"
 [[ -s "$SOURCE_DUMP" ]] || die "The production PostgreSQL snapshot is empty."
 
@@ -301,7 +360,7 @@ echo "Production snapshot complete; restoring the live service."
 docker start "$SOURCE_WEB_ID"
 SOURCE_STOPPED=0
 for attempt in {1..60}; do
-    if curl -fsS --max-time 5 http://127.0.0.1:8093/status.php >/dev/null 2>&1; then
+    if curl -fsS --max-time 5 "${SOURCE_STATUS_RESOLVE[@]}" "$SOURCE_STATUS_URL" >/dev/null 2>&1; then
         break
     fi
     sleep 2
@@ -323,6 +382,7 @@ remote_compose "exec -T owncloud-db dropdb --if-exists -U postgres owncloud"
 remote_compose "exec -T owncloud-db createdb -U postgres -O owncloud owncloud"
 cat "$SOURCE_DUMP" |
     ssh -i "$SSH_KEY" \
+        "${SSH_ALIAS[@]}" \
         -o IdentitiesOnly=yes \
         -o BatchMode=yes \
         -o ConnectTimeout=15 \

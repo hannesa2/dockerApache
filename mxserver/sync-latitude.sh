@@ -26,7 +26,23 @@ STAGING_DATABASE="MXServer_staging"
 PREVIOUS_DATABASE="MXServer_previous"
 SOURCE_PICTURES="/srv/postgres/data/mxinfo"
 SOURCE_KEYFILE="/opt/glassfish-4.0/glassfish/domains/domain1/config/keyfile"
+SOURCE_DB_USER="postgres"
+if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
+    [[ "$(hostname -s)" == beelink ]] || { echo "ERROR: Expected beelink." >&2; exit 1; }
+    [[ "$(findmnt -rn -M /daten -t ext4 -o UUID)" == c0c42461-ae4c-4edb-a993-bba94a05ed6c ]] ||
+        { echo "ERROR: Expected encrypted T7." >&2; exit 1; }
+    SOURCE_KIND="docker"
+    SOURCE_CONTAINER="beelink-staging-mxserver-1"
+    SOURCE_DB_USER="beelink_restore"
+    SOURCE_PICTURES="/daten/beelink-runtime/rootfs/srv/postgres/data/mxinfo"
+    SOURCE_KEYFILE="/daten/beelink-runtime/java-web/glassfish/glassfish/domains/domain1/config/keyfile"
+fi
 MIRROR_HOST="mac2016"
+SSH_ALIAS=()
+if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
+    MIRROR_HOST="192.168.178.70"
+    SSH_ALIAS=(-o HostKeyAlias=mac2016)
+fi
 MIRROR_USER="hannes"
 MIRROR_ROOT="/Volumes/SamsungT5_1T/MXServerMirror"
 MIRROR_PICTURES="$MIRROR_ROOT/pictures"
@@ -44,6 +60,7 @@ die() {
 
 remote() {
     ssh -i "$SSH_KEY" \
+        "${SSH_ALIAS[@]}" \
         -o IdentitiesOnly=yes \
         -o BatchMode=yes \
         -o ConnectTimeout=15 \
@@ -56,6 +73,7 @@ remote() {
 }
 
 ssh_options=(
+    "${SSH_ALIAS[@]}"
     -i "$SSH_KEY"
     -o IdentitiesOnly=yes
     -o BatchMode=yes
@@ -123,11 +141,12 @@ rsync -rlt --delete --partial \
     --chmod=Du=rwx,Fu=rw \
     --rsync-path=/usr/local/bin/rsync \
     --info=progress2,stats1 \
-    -e "ssh -i $SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KNOWN_HOSTS" \
+    -e "ssh -i $SSH_KEY ${SSH_ALIAS[*]} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KNOWN_HOSTS" \
     "$SOURCE_PICTURES/" "$MIRROR_USER@$MIRROR_HOST:$MIRROR_PICTURES/"
 
 mirror_keyfile_staged=1
 scp -i "$SSH_KEY" \
+    "${SSH_ALIAS[@]}" \
     -o IdentitiesOnly=yes \
     -o BatchMode=yes \
     -o ConnectTimeout=15 \
@@ -145,7 +164,7 @@ echo "Streaming the MXServer PostgreSQL snapshot to mac2016..."
 if [[ "$SOURCE_KIND" == native ]]; then
     source_dump=(runuser -u postgres -- pg_dump)
 else
-    source_dump=(docker exec --user postgres "$SOURCE_CONTAINER" pg_dump)
+    source_dump=(docker exec --user postgres "$SOURCE_CONTAINER" pg_dump -U "$SOURCE_DB_USER")
 fi
 "${source_dump[@]}" --format=plain --no-owner --no-privileges --dbname="$SOURCE_DATABASE" |
     ssh "${ssh_options[@]}" "$MIRROR_USER@$MIRROR_HOST" \

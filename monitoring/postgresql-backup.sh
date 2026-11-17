@@ -38,8 +38,15 @@ dump_host() {
 verify() {
     local file="$1" entries tables
     [[ -s "$file" ]] || fail "Empty dump: $file"
-    entries="$(pg_restore -l "$file")" || fail "Cannot read archive: $file"
-    pg_restore -f /dev/null "$file" || fail "Cannot read all archive data: $file"
+    if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
+        entries="$(docker exec -i beelink-staging-mxserver-1 pg_restore -l < "$file")" ||
+            fail "Cannot read archive: $file"
+        docker exec -i beelink-staging-mxserver-1 pg_restore -f /dev/null < "$file" ||
+            fail "Cannot read all archive data: $file"
+    else
+        entries="$(pg_restore -l "$file")" || fail "Cannot read archive: $file"
+        pg_restore -f /dev/null "$file" || fail "Cannot read all archive data: $file"
+    fi
     tables="$(printf '%s\n' "$entries" | grep -c ' TABLE DATA ' || true)"
     echo "Verified archive: $(basename "$file") ($(wc -c < "$file" | tr -d ' ') bytes; $tables table-data entries)"
     if [[ "$tables" -eq 0 ]]; then
@@ -48,7 +55,16 @@ verify() {
 }
 
 for database in MXServer; do
-    dump_host "$database"
+    if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
+        [[ "$(hostname -s)" == beelink &&
+           "$(findmnt -rn -M /daten -t ext4 -o UUID)" == c0c42461-ae4c-4edb-a993-bba94a05ed6c ]] ||
+            fail "Expected beelink encrypted T7."
+        docker exec beelink-staging-mxserver-1 pg_dump -U beelink_restore -d "$database" -Fc \
+            > "$staging/host-$database.dump"
+        verify "$staging/host-$database.dump"
+    else
+        dump_host "$database"
+    fi
 done
 
 for database in camDoor camHinten camPi3; do
@@ -60,7 +76,7 @@ for database in camDoor camHinten camPi3; do
 done
 
 echo "Backing up Docker ownCloud database: $container / owncloud_stage"
-docker exec "$container" pg_dump -w -U owncloud_stage -d owncloud_stage -Fc \
+docker exec "$container" pg_dump -w -U "${POSTGRES_OWNCLOUD_USER:-owncloud_stage}" -d owncloud_stage -Fc \
     > "$staging/docker-owncloud_stage.dump"
 verify "$staging/docker-owncloud_stage.dump"
 

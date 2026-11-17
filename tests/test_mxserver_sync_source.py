@@ -20,6 +20,9 @@ class MirrorSourceTest(unittest.TestCase):
         for name in ("keyfile", "ssh-key", "known-hosts"):
             (root / name).write_text("fixture")
         replacements = {
+            "/daten/beelink-runtime/rootfs/srv/postgres/data/mxinfo": str(root / "pictures"),
+            "/daten/beelink-runtime/java-web/glassfish/glassfish/domains/domain1/config/keyfile":
+                str(root / "keyfile"),
             "/srv/postgres/data/mxinfo": str(root / "pictures"),
             "/opt/glassfish-4.0/glassfish/domains/domain1/config/keyfile": str(root / "keyfile"),
             "/home/hannes/.ssh/id_rsa": str(root / "ssh-key"),
@@ -28,7 +31,7 @@ class MirrorSourceTest(unittest.TestCase):
             "/etc/mxserver-postgres-dockerized": str(root / "cutover-marker"),
         }
         source = SOURCE.read_text()
-        for old, new in replacements.items():
+        for old, new in sorted(replacements.items(), key=lambda item: -len(item[0])):
             self.assertIn(old, source)
             source = source.replace(old, new)
         self.script = root / "sync.sh"
@@ -37,6 +40,8 @@ class MirrorSourceTest(unittest.TestCase):
                         TEST_LOG=str(root / "calls"))
         commands = {
             "id": 'echo 0',
+            "hostname": 'echo beelink',
+            "findmnt": 'echo c0c42461-ae4c-4edb-a993-bba94a05ed6c',
             "pg_dump": 'exit 0',
             "runuser": 'echo "native $*" >> "$TEST_LOG"; [ "${DUMP_FAIL:-0}" = 0 ] || exit 1; echo snapshot',
             "docker": """
@@ -96,6 +101,15 @@ class MirrorSourceTest(unittest.TestCase):
         result = self.run_sync("--source=unknown")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.root / "calls").exists())
+
+    def test_beelink_uses_new_container_role_and_pinned_mirror_alias(self):
+        result = self.run_sync(BEELINK_PRODUCTION="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls()
+        self.assertIn("beelink-staging-mxserver-1 pg_dump -U beelink_restore", calls)
+        self.assertIn("HostKeyAlias=mac2016", calls)
+        self.assertIn("hannes@192.168.178.70", calls)
+        self.assertNotIn("native -u postgres", calls)
 
 
 if __name__ == "__main__":

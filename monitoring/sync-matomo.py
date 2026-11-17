@@ -17,6 +17,14 @@ TARGET = os.environ.get("MATOMO_MIRROR_DIR", "/Users/hannes/server/apache/www/mx
 STATE = Path.home() / ".local/state/matomo-mirror"
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
        "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "mac2016"]
+RSYNC_SSH = "ssh -o BatchMode=yes -o ConnectTimeout=15"
+MIRROR = "mac2016"
+if os.environ.get("BEELINK_PRODUCTION") == "1":
+    MIRROR = "hannes@192.168.178.70"
+    RSYNC_SSH += (" -i /home/hannes/.ssh/id_rsa -o IdentitiesOnly=yes"
+                  " -o StrictHostKeyChecking=yes -o HostKeyAlias=mac2016"
+                  " -o UserKnownHostsFile=/home/hannes/.ssh/known_hosts")
+    SSH = RSYNC_SSH.split() + [MIRROR]
 
 
 def run(command, **kwargs):
@@ -102,17 +110,23 @@ def synchronize(apply):
         defaults.chmod(0o600)
         dump = temporary / "source.sql"
         with dump.open("wb") as stream:
-            run(["mysqldump", f"--defaults-extra-file={defaults}",
+            command = ["mysqldump", f"--defaults-extra-file={defaults}"]
+            if os.environ.get("BEELINK_PRODUCTION") == "1":
+                if database["host"] != "beelink-staging-native-mysql-1":
+                    raise RuntimeError("Unexpected beelink Matomo database host")
+                command = ["docker", "exec", "beelink-staging-native-mysql-1",
+                           "mysqldump", "--defaults-extra-file=/run/restore-client.cnf"]
+            run(command + [
                  "--single-transaction", "--no-tablespaces", "--hex-blob",
                  database["dbname"]], stdout=stream)
         run(["rsync", "-rltp", "--delete", "--rsync-path=/usr/local/bin/rsync",
              "--exclude=/config/", "--exclude=/tmp/", "--exclude=/.htaccess",
-             "-e", "ssh -o BatchMode=yes -o ConnectTimeout=15",
-             str(SOURCE) + "/", f"mac2016:{TARGET}/"])
+             "-e", RSYNC_SSH,
+             str(SOURCE) + "/", f"{MIRROR}:{TARGET}/"])
         run(["rsync", "-rltp", "--delete", "--rsync-path=/usr/local/bin/rsync",
              "--exclude=/config.ini.php*",
-             "-e", "ssh -o BatchMode=yes -o ConnectTimeout=15",
-             str(SOURCE / "config") + "/", f"mac2016:{TARGET}/config/"])
+             "-e", RSYNC_SSH,
+             str(SOURCE / "config") + "/", f"{MIRROR}:{TARGET}/config/"])
         with dump.open("rb") as stream:
             remote("docker exec -i apache-db-1 sh -c " + shlex.quote(
                 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -e '
