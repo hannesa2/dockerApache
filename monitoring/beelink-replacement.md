@@ -1469,6 +1469,18 @@ does not encrypt HTTP end-to-end.
 
 ### Production naming correction (applied)
 
+On 2026-11-18 the first scheduled GitLab sync failed before secrets replacement
+or restore: the mirror's `gitlab-ctl stop puma` timed out. Its cleanup recovered
+the previous mirror; the source retained the pending snapshot for retry.
+The installed `gitlab/mac2016-backup-receiver.sh` now uses runit's
+`sv -w 300 down` for nginx, Puma and Sidekiq and explicitly verifies a `down:`
+status before continuing. This also covers failure cleanup and the second stop
+after reconfigure. There is no forced kill or ignored timeout. The updated
+receiver was deployed on mac2016, and an actual mirror Puma stop/down check/
+restart/readiness cycle succeeded. The failed snapshot transfer/restore has
+not yet been retried; its scheduled job status remains FAILED until that
+retry succeeds.
+
 The corrected retry completed on 2026-11-17 around 22:25. Live inspection
 confirmed the renamed production containers running, GitLab healthy,
 `beelink-production.service` active and boot-enabled, both public sockets

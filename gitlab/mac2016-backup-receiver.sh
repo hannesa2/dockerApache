@@ -41,13 +41,34 @@ container_work="/gitlab-backup-archives/.sync"
 services_stopped=0
 restore_started=0
 work_created=0
+stop_service() {
+    local service="$1" service_status
+    case "$service" in
+        nginx|puma|sidekiq) ;;
+        *) echo "Refusing unexpected service: $service" >&2; return 1 ;;
+    esac
+    echo "Waiting up to 300 seconds for GitLab $service to stop." >&2
+    if ! docker exec gitlab16 /opt/gitlab/embedded/bin/sv -w 300 down "/opt/gitlab/service/$service"; then
+        echo "ERROR: GitLab $service did not stop within 300 seconds." >&2
+        return 1
+    fi
+    if ! service_status="$(docker exec gitlab16 /opt/gitlab/embedded/bin/sv status "/opt/gitlab/service/$service")"; then
+        echo "ERROR: Could not verify stopped GitLab service: $service" >&2
+        return 1
+    fi
+    case "$service_status" in
+        "down: /opt/gitlab/service/$service:"*) ;;
+        *) echo "ERROR: GitLab $service is not confirmed down: $service_status" >&2; return 1 ;;
+    esac
+}
+
 cleanup() {
     status=$?
     trap - EXIT
     if [ "$services_stopped" -eq 1 ]; then
         if [ "$restore_started" -eq 1 ]; then
             for service in nginx puma sidekiq; do
-                docker exec gitlab16 gitlab-ctl stop "$service" || status=1
+                stop_service "$service" || status=1
             done
             echo "ERROR: GitLab restore failed; nginx, puma and sidekiq remain stopped. Retry the sync; do not serve partially restored data." >&2
         else
@@ -151,14 +172,14 @@ docker exec gitlab16 cp /etc/gitlab/gitlab-secrets.json "$container_work/previou
 services_stopped=1
 for service in nginx puma sidekiq; do
     echo "Stopping GitLab $service before applying source secrets." >&2
-    docker exec gitlab16 gitlab-ctl stop "$service"
+    stop_service "$service"
 done
 docker exec gitlab16 cp "$container_work/gitlab-secrets.json" /etc/gitlab/gitlab-secrets.json
 echo "Reconfiguring GitLab with source encryption secrets." >&2
 docker exec gitlab16 gitlab-ctl reconfigure
 for service in nginx puma sidekiq; do
     echo "Stopping GitLab $service before restoring the snapshot." >&2
-    docker exec gitlab16 gitlab-ctl stop "$service"
+    stop_service "$service"
 done
 
 printf '%s\n' "$backup_id" > "$state_dir/restore-in-progress"
@@ -179,7 +200,7 @@ for attempt in $(seq 1 120); do
 done
 if [ "$ready" -ne 1 ]; then
     for service in nginx puma sidekiq; do
-        docker exec gitlab16 gitlab-ctl stop "$service"
+        stop_service "$service"
     done
     echo "GitLab did not become ready after restore; inspect its logs." >&2
     exit 1
