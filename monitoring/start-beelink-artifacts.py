@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage GitHub artifact downloads using the proven mac2016 Docker image."""
+"""Prepare authenticated GitHub artifact uploads and downloads using the proven image."""
 
 import argparse
 import fcntl
@@ -18,7 +18,7 @@ frontend = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(frontend)
 apps = frontend.apps
 WORK = apps.RUNTIME / "artifacts"
-IMAGE = "local/github-artifacts:server-relocation"
+IMAGE = "local/github-artifacts:production-features"
 COMPOSE = ["docker", "compose", "-p", "beelink-artifacts", "-f", str(WORK / "compose.json")]
 CONFIGURE = r"""
 from pathlib import Path
@@ -53,6 +53,68 @@ with urllib.request.urlopen(request, timeout=10) as response:
         raise RuntimeError('Artifact application authentication failed')
 print('Original artifact credentials authenticate; no writes performed')
 """
+CHECK_UPLOAD = r"""
+import base64
+import secrets
+import urllib.error
+import urllib.parse
+import urllib.request
+import yaml
+
+with open('/app/parameter.yml') as stream:
+    credentials = yaml.safe_load(stream)['authentication']
+token = base64.b64encode(
+    (credentials['username'] + ':' + credentials['password']).encode()).decode()
+name = 'beelink-probe-' + secrets.token_hex(8) + '.txt'
+payload = b'authenticated artifact upload probe'
+boundary = '----beelink-' + secrets.token_hex(12)
+body = (
+    f'--{boundary}\r\nContent-Disposition: form-data; name="job"\r\n\r\nprobe\r\n'
+    f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\n'
+    'Content-Type: text/plain\r\n\r\n'
+).encode() + payload + f'\r\n--{boundary}--\r\n'.encode()
+auth = {'Authorization': 'Basic ' + token}
+url = 'http://127.0.0.1:5000/'
+try:
+    request = urllib.request.Request(
+        url, data=body, headers={**auth, 'Content-Type': 'multipart/form-data; boundary=' + boundary})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        if response.read() != payload or not response.geturl().endswith('/uploads/probe_' + name):
+            raise RuntimeError('Authenticated upload/download probe failed')
+    protected = urllib.request.Request(url, data=body,
+                                       headers={'Content-Type': 'multipart/form-data; boundary=' + boundary})
+    try:
+        urllib.request.urlopen(protected, timeout=15)
+    except urllib.error.HTTPError as error:
+        if error.code != 401:
+            raise RuntimeError('Unauthenticated upload was not rejected')
+    else:
+        raise RuntimeError('Unauthenticated upload was accepted')
+    delete = urllib.request.Request(
+        'http://127.0.0.1:5000/delete',
+        data=urllib.parse.urlencode({'name': 'probe_' + name}).encode(),
+        headers={**auth, 'Content-Type': 'application/x-www-form-urlencoded'})
+    with urllib.request.urlopen(delete, timeout=15):
+        pass
+    try:
+        urllib.request.urlopen('http://127.0.0.1:5000/uploads/probe_' + name, timeout=15)
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise RuntimeError('Uploaded probe cleanup failed')
+    else:
+        raise RuntimeError('Uploaded probe remains after cleanup')
+finally:
+    cleanup = urllib.request.Request(
+        'http://127.0.0.1:5000/delete',
+        data=urllib.parse.urlencode({'name': 'probe_' + name}).encode(),
+        headers={**auth, 'Content-Type': 'application/x-www-form-urlencoded'})
+    try:
+        urllib.request.urlopen(cleanup, timeout=15).close()
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+print('Authenticated upload, unauthenticated rejection, download and cleanup checked')
+"""
 
 
 def compose_config(image):
@@ -63,7 +125,7 @@ def compose_config(image):
             "user": "10001:10001", "restart": "no", "networks": ["isolated"],
             "read_only": True, "tmpfs": ["/tmp"],
             "volumes": [
-                apps.mount(WORK / "files", "/app/files", True),
+                apps.mount(WORK / "files", "/app/files"),
                 apps.mount(WORK / "parameter.yml", "/app/parameter.yml", True),
             ],
         }},
@@ -74,9 +136,21 @@ def compose_config(image):
 def prepare(image):
     config = compose_config(image)
     if (WORK / "compose.json").exists():
-        if json.loads((WORK / "compose.json").read_text()) != config \
-                or not (WORK / "prepared").is_file():
+        existing = json.loads((WORK / "compose.json").read_text())
+        previous = json.loads(json.dumps(config))
+        previous["services"]["artifacts"]["image"] = existing["services"]["artifacts"]["image"]
+        previous["services"]["artifacts"]["volumes"][0]["read_only"] = True
+        if existing not in (config, previous) or not (WORK / "prepared").is_file():
             raise RuntimeError("Existing artifact staging differs or is incomplete")
+        if existing != config:
+            ids = apps.capture(*COMPOSE, "ps", "--all", "--quiet").splitlines()
+            if any(apps.capture("docker", "inspect", "--format", "{{.State.Running}}", item)
+                   != "false" for item in ids):
+                raise RuntimeError("Stop artifacts before enabling uploads")
+            for path in (WORK / "files", WORK / "parameter.yml"):
+                if path.is_symlink() or not path.exists():
+                    raise RuntimeError("Missing or unsafe artifact input: " + str(path))
+            apps.write_json(WORK / "compose.json", config)
         return
     if (WORK / "files").exists() or (WORK / "parameter.yml").exists():
         raise RuntimeError("Unmanaged artifact working files exist")
@@ -108,6 +182,7 @@ def verify():
     apps.wait_http("artifacts", ["python", "-c",
                                "from urllib.request import urlopen; urlopen('http://127.0.0.1:5000/',timeout=5)"])
     apps.run(*COMPOSE, "exec", "-T", "artifacts", "python", "-c", CHECK_AUTH)
+    apps.run(*COMPOSE, "exec", "-T", "artifacts", "python", "-c", CHECK_UPLOAD)
     apps.run("python3", str(Path(__file__).with_name("start-beelink-frontend.py")),
              "--start-isolated")
     body, status = frontend.response("www.mxtracks.info", "/github/")
@@ -150,11 +225,12 @@ print('Original artifact downloaded through verified TLS; SHA256 matches')
              settings["frontend_ip"], path.name, checksum)
     apps.write_json(WORK / "artifacts-report.json", {
         "files": len(list((WORK / "files").iterdir())),
-        "authentication": "Original credentials and anonymous 401 checked without writes",
+        "authentication": "Authenticated upload checked; unauthenticated upload returns 401",
         "tls": "Prefix HTML, version, original file SHA256 download checked",
-        "read_only": True, "production_ready": False,
+        "writable_data_only": True, "production_ready": False,
     })
-    print("Artifact Docker/TLS checks complete. Uploads and sync jobs remain disabled.", flush=True)
+    print("Artifact Docker/TLS checks complete. Authenticated upload verified; sync jobs remain disabled.",
+          flush=True)
 
 
 def main():

@@ -1,0 +1,117 @@
+--- a/main.py
++++ b/main.py
+@@ -1,5 +1,7 @@
+ import base64
++import binascii
+ import os
++from pathlib import Path
+ import subprocess
+ 
+ import socket
+@@ -7,6 +9,7 @@
+ 
+ from werkzeug.middleware.proxy_fix import ProxyFix
+ import yaml
+-from flask import Flask, render_template, request, redirect, flash, url_for, send_from_directory, Response, jsonify
++from flask import (Flask, abort, render_template, request, redirect, flash, url_for,
++                   send_from_directory, Response, jsonify)
+ from werkzeug.utils import secure_filename
+ 
+@@ -51,7 +54,7 @@
+                 username, password = base64.b64decode(credentials).decode('utf-8').split(':', 1)
+                 if username == AUTH_USER and password == AUTH_PASSWORD:
+                     return f(*args, **kwargs)
+-        except:
++        except (binascii.Error, UnicodeDecodeError, ValueError):
+             pass
+ 
+         return Response(
+@@ -62,6 +65,16 @@
+     return decorated
+ 
+ 
++def artifact_path(name):
++    root = Path(app.config['UPLOAD_FOLDER']).resolve(strict=True)
++    if not name or name in ('.', '..') or '/' in name or '\\' in name:
++        abort(400)
++    path = root / name
++    if path.is_symlink() or path.resolve(strict=False).parent != root:
++        abort(400)
++    return path
++
++
+ @app.route('/')
+ def index():
+     return render_template('index.html', itemsList=os.listdir(UPLOAD_FOLDER), versionGit=version)
+@@ -105,7 +118,10 @@
+ 
+         prefix = ""
+         if 'job' in request.form:
+-            prefix = request.form["job"]+"_"
++            job = secure_filename(request.form["job"])
++            if not job:
++                return "Invalid job name", 400
++            prefix = job + "_"
+ 
+         # check if the post request has the file part
+         if 'file' not in request.files:
+@@ -120,7 +136,9 @@
+             return redirect(request.url)
+         if file and allowed_file(file.filename):
+             filename = secure_filename(file.filename)
+-            file.save(os.path.join(app.config['UPLOAD_FOLDER'], prefix+filename))
++            if not filename:
++                return "Invalid file name", 400
++            file.save(artifact_path(prefix + filename))
+             app.logger.debug("redirectTo: " + url_for('download_file', name=prefix+filename))
+             return redirect(url_for('download_file', name=prefix+filename))
+         else:
+@@ -149,15 +167,13 @@
+ 
+ 
+ @app.route('/get', methods=['GET'])
++@basic_auth_required
+ def get():
+-    name = request.args['name']
+-    try:
+-        fp = open(UPLOAD_FOLDER + '/' + name, 'r')
+-        content = fp.read()
+-        fp.close()
+-        return content
+-    except FileNotFoundError:
+-        print("Please check the path")
++    name = request.args.get('name', '')
++    path = artifact_path(name)
++    if not path.is_file():
++        abort(404)
++    return send_from_directory(app.config["UPLOAD_FOLDER"], path.name)
+ 
+ 
+ @app.route('/update', methods=['POST'])
+@@ -165,15 +181,21 @@
+ def update():
+     message = "/update from {} to {} endpoint={}".format(socket.gethostname(), request.remote_addr, request.endpoint)
+     app.logger.debug(message)
+-    old_name = request.form['old_name']
+-    new_name = request.form['new_name']
+-    os.rename(UPLOAD_FOLDER + '/' + old_name, UPLOAD_FOLDER + '/' + new_name)
++    old_path = artifact_path(request.form.get('old_name', ''))
++    new_path = artifact_path(request.form.get('new_name', ''))
++    if not old_path.is_file():
++        abort(404)
++    if old_path == new_path or new_path.exists():
++        abort(409)
++    old_path.rename(new_path)
+     return redirect('/')
+ 
+ 
+ @app.route('/delete', methods=['POST'])
+ @basic_auth_required
+ def delete():
+-    name = request.form['name']
+-    os.remove(UPLOAD_FOLDER + '/' + name)
++    path = artifact_path(request.form.get('name', ''))
++    if not path.is_file():
++        abort(404)
++    path.unlink()
+     return redirect('/')

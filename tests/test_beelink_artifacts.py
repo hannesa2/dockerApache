@@ -11,10 +11,11 @@ SPEC = importlib.util.spec_from_file_location(
     "monitoring/start-beelink-artifacts.py")
 ART = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(ART)
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class BeelinkArtifactsTest(unittest.TestCase):
-    def test_artifacts_are_internal_readonly_without_public_ports(self):
+    def test_artifacts_are_internal_with_only_the_data_mount_writable(self):
         config = ART.compose_config("image")
         service = config["services"]["artifacts"]
         self.assertEqual(service["networks"], ["isolated"])
@@ -24,8 +25,12 @@ class BeelinkArtifactsTest(unittest.TestCase):
         self.assertEqual(service["tmpfs"], ["/tmp"])
         for key in ("ports", "network_mode", "privileged"):
             self.assertNotIn(key, service)
+        files, parameters = service["volumes"]
+        self.assertEqual(files["target"], "/app/files")
+        self.assertFalse(files["read_only"])
+        self.assertEqual(parameters["target"], "/app/parameter.yml")
+        self.assertTrue(parameters["read_only"])
         for mount in service["volumes"]:
-            self.assertTrue(mount["read_only"])
             self.assertTrue(mount["source"].startswith("/daten/beelink-runtime/artifacts/"))
             self.assertFalse(mount["bind"]["create_host_path"])
 
@@ -38,6 +43,43 @@ class BeelinkArtifactsTest(unittest.TestCase):
         self.assertNotIn("config['authentication'] =", ART.CONFIGURE)
         compile(ART.CONFIGURE, "<configure>", "exec")
         compile(ART.CHECK_AUTH, "<auth-check>", "exec")
+        compile(ART.CHECK_UPLOAD, "<upload-check>", "exec")
+
+    def test_upload_probe_requires_auth_and_cleans_up_its_artifact(self):
+        self.assertIn("authenticated upload", ART.CHECK_UPLOAD)
+        self.assertIn("if error.code != 401", ART.CHECK_UPLOAD)
+        self.assertIn("5000/delete", ART.CHECK_UPLOAD)
+        self.assertIn("upload-safety.patch", (ROOT / "github-artifacts/Dockerfile").read_text())
+
+    def test_upload_patch_confines_mutations_and_protects_file_reads(self):
+        text = (ROOT / "github-artifacts/upload-safety.patch").read_text()
+        self.assertIn("def artifact_path(name):", text)
+        self.assertIn("@basic_auth_required\n def get():", text)
+        self.assertIn("old_path.rename(new_path)", text)
+        self.assertIn("path.unlink()", text)
+        self.assertIn("job = secure_filename(request.form[\"job\"])", text)
+
+    def test_existing_readonly_service_migrates_to_new_image_only_when_stopped(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            with patch.object(ART, "WORK", work):
+                desired = ART.compose_config("new-image")
+                previous = json.loads(json.dumps(desired))
+                previous["services"]["artifacts"]["image"] = "old-image"
+                previous["services"]["artifacts"]["volumes"][0]["read_only"] = True
+                (work / "compose.json").write_text(json.dumps(previous))
+                (work / "prepared").touch()
+                (work / "files").mkdir()
+                (work / "files" / "existing").write_text("unchanged")
+                (work / "parameter.yml").write_text("private")
+                with patch.object(ART.apps, "capture", side_effect=["id", "true"]):
+                    with self.assertRaisesRegex(RuntimeError, "Stop artifacts"):
+                        ART.prepare("new-image")
+                with patch.object(ART.apps, "capture", side_effect=["id", "false"]):
+                    ART.prepare("new-image")
+                self.assertEqual(json.loads((work / "compose.json").read_text()), desired)
+                self.assertEqual((work / "files" / "existing").read_text(), "unchanged")
+                self.assertEqual((work / "parameter.yml").read_text(), "private")
 
     def test_artifact_proxy_precedes_wordpress_and_preserves_prefix(self):
         text = ART.frontend.vhosts("172.19.0.1", artifacts=True)
