@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify split DNS and authenticated DNS-over-TLS without publishing DNS ports."""
+"""Publish and verify dual-stack split DNS and authenticated DNS-over-TLS."""
 
 import argparse
 import fcntl
@@ -63,7 +63,8 @@ def query(host, kind, transport):
     labels = b''.join(bytes([len(label)]) + label.encode('ascii') for label in host.split('.')) + b'\0'
     packet = struct.pack('!HHHHHH', identifier, 0x100, 1, 0, 0, 0) + labels + struct.pack('!HH', kind, 1)
     if transport == 'udp':
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as stream:
+        family = socket.AF_INET6 if ipaddress.ip_address(ip).version == 6 else socket.AF_INET
+        with socket.socket(family, socket.SOCK_DGRAM) as stream:
             stream.settimeout(10)
             stream.connect((ip, 53))
             stream.send(packet)
@@ -128,12 +129,18 @@ def corefile():
             f"/etc/letsencrypt/live/{CERT_NAME}/privkey.pem\n" + block + "}\n")
 
 
-def compose_config(image):
-    return {
+def compose_config(image, publish=True):
+    config = {
         "name": "beelink-dns",
         "services": {"dns": {
             "image": image, "user": "0:0", "restart": "no", "read_only": True,
             "networks": ["resolver"],
+            "ports": [
+                {"target": port, "published": port, "host_ip": host_ip,
+                 "protocol": protocol}
+                for host_ip in (IPV4, IPV6)
+                for port, protocol in ((53, "udp"), (53, "tcp"), (853, "tcp"))
+            ],
             "command": ["-conf", "/Corefile"],
             "volumes": [
                 apps.mount(WORK / "Corefile", "/Corefile", True),
@@ -143,14 +150,39 @@ def compose_config(image):
         }},
         "networks": {"resolver": {"driver": "bridge"}},
     }
+    if not publish:
+        del config["services"]["dns"]["ports"]
+    return config
+
+
+def expected_bindings():
+    return {
+        f"{port}/{protocol}": [
+            {"HostIp": host_ip, "HostPort": str(port)} for host_ip in (IPV4, IPV6)]
+        for port, protocol in ((53, "udp"), (53, "tcp"), (853, "tcp"))
+    }
+
+
+def normalize_bindings(bindings):
+    return {key: sorted((str(ipaddress.ip_address(item["HostIp"])), item["HostPort"])
+                        for item in (values or []))
+            for key, values in bindings.items() if values}
 
 
 def prepare(image):
     config = compose_config(image)
     if (WORK / "compose.json").exists():
-        if (json.loads((WORK / "compose.json").read_text()) != config
-                or (WORK / "Corefile").read_text() != corefile()):
+        previous = json.loads((WORK / "compose.json").read_text())
+        if (previous != config and previous != compose_config(image, publish=False)) \
+                or (WORK / "Corefile").read_text() != corefile():
             raise RuntimeError("Existing DNS test configuration differs")
+        if previous != config:
+            ids = apps.capture(*COMPOSE, "ps", "--all", "--quiet").splitlines()
+            for container_id in ids:
+                if apps.capture("docker", "inspect", "--format", "{{.State.Running}}",
+                                container_id) != "false":
+                    raise RuntimeError("Stop the DNS test service before publishing LAN ports")
+            apps.write_json(WORK / "compose.json", config)
         return
     if (WORK / "Corefile").exists():
         raise RuntimeError("Unmanaged DNS Corefile exists")
@@ -164,21 +196,22 @@ def verify():
     apps.run("openssl", "x509", "-in", str(cert), "-noout", "-checkhost", DOT_HOST)
     apps.run(*COMPOSE, "up", "-d", "--pull", "never")
     container = apps.capture(*COMPOSE, "ps", "--quiet", "dns")
-    ip = apps.capture("docker", "inspect", "--format",
-                      '{{(index .NetworkSettings.Networks "beelink-dns_resolver").IPAddress}}',
-                      container)
-    ipaddress.IPv4Address(ip)
-    apps.run("docker", "run", "--rm", "--network", "beelink-dns_resolver",
-             "--read-only", "--entrypoint", "python",
-             "local/github-artifacts:server-relocation", "-c", PROBE, ip, IPV4, IPV6,
-             DOT_HOST, json.dumps(DOMAINS), json.dumps(MIRRORS))
+    bindings = json.loads(apps.capture("docker", "inspect", container))[0][
+        "NetworkSettings"]["Ports"]
+    expected = expected_bindings()
+    if normalize_bindings(bindings) != normalize_bindings(expected):
+        raise RuntimeError("Published DNS/DoT host bindings differ from the approved LAN addresses")
+    for ip in (IPV4, IPV6):
+        apps.run("python3", "-c", PROBE, ip, IPV4, IPV6, DOT_HOST,
+                 json.dumps(DOMAINS), json.dumps(MIRRORS))
     apps.write_json(WORK / "dns-report.json", {
         "domains": list(DOMAINS), "ipv4": IPV4, "ipv6": IPV6,
         "mirror_domains": list(MIRRORS), "dot_hostname": DOT_HOST,
         "checks": "UDP/TCP53 and verified TLS853, A/AAAA and upstream forwarding",
-        "published_ports": [], "production_ready": False,
+        "published_ports": expected, "production_ready": False,
     })
-    print("DNS/DoT test complete. LAN DNS, router and retired Nextcloud application unchanged.",
+    print("Dual-stack DNS/DoT is published on the configured LAN addresses; "
+          "router/client DNS settings remain separate.",
           flush=True)
 
 
@@ -198,7 +231,8 @@ def main():
             or not (apps.RUNTIME / "staging-restart-report.json").is_file()):
         raise RuntimeError("Complete private cold restart verification first")
     addresses = json.loads(apps.capture("ip", "-j", "-6", "addr", "show"))
-    if not any(item["local"] == IPV6 for interface in addresses for item in interface["addr_info"]):
+    if not any(ipaddress.ip_address(item["local"]) == ipaddress.ip_address(IPV6)
+               for interface in addresses for item in interface["addr_info"]):
         raise RuntimeError("Expected beelink IPv6 address is not present")
     if WORK.is_symlink():
         raise RuntimeError("DNS work directory must not be a symlink")
