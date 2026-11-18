@@ -388,10 +388,13 @@ The helper excludes Git metadata and Matomo (already staged separately).
 It relocates the dev site's absolute Query Monitor symlink within the copied
 tree and rejects escaping/missing targets. Container `www-data` owns the
 copied files, with directories 0750, files 0640 and `wp-config.php` 0600.
-WP-Cron, automatic updates and external WordPress HTTP requests are disabled.
-The internal-only HTTP vhosts supply the HTTPS proxy header expected by the
-original WordPress URLs, avoiding redirects to Latitude during HTTP probes.
-No host ports, source syncs, production schedules or boot activation are added.
+The prepared WordPress configuration enables WP-Cron and outbound HTTP while
+keeping automatic updates disabled. Apache joins the internal database network
+and a separate bridge for outbound requests; no host ports are published.
+Verification checks the cron/HTTP constants and makes a read-only request to
+the WordPress version API from WordPress itself. The internal HTTP vhosts supply
+the HTTPS proxy header expected by the original URLs, avoiding redirects to
+Latitude during probes. Source syncs, schedules and boot activation are not added.
 
 Checks require Apache syntax, actual WordPress credentials and nonempty posts,
 the original home/siteurl values, and HTTP 200 WordPress HTML from both the
@@ -551,10 +554,12 @@ ssh -t hannes@beelink 'sudo systemd-run --unit=beelink-artifacts-stage \
 The helper copies those files to `/daten/beelink-runtime/artifacts`, adapts
 only the file directory in the copied original credentials, and runs as
 UID/GID 10001 on the internal network with no published ports. The root
-filesystem, configuration and artifact files are read-only; only temporary
-Gunicorn files use tmpfs. There are no GitHub API calls, polling or sync jobs.
-Uploads/updates/deletes remain disabled by the read-only mount until a
-separate production step; no test writes use source or mirror files.
+filesystem and configuration are read-only; only `/app/files` is writable,
+with temporary Gunicorn files in tmpfs. Authenticated upload, update and delete
+are enabled; unauthenticated writes and `/get` downloads are rejected. A
+temporary authenticated upload/download/delete probe checks the flow and
+cleanup. There are no GitHub API calls, polling or sync jobs, and no test writes
+use source or mirror files.
 
 The exact current frontend configuration is backed up and `/github/` is
 connected ahead of WordPress with the working mac2016 prefix headers.
@@ -652,8 +657,8 @@ ssh -t hannes@beelink 'sudo systemd-run --unit=beelink-dns-stage \
   /usr/bin/python3 /home/hannes/git/dockerApache/monitoring/start-beelink-dns.py --start-isolated'
 ```
 
-This stages CoreDNS 1.11.3 (the transferred source image) under private
-`/daten/beelink-runtime/dns`, without host ports or host networking.
+This prepares CoreDNS 1.11.3 (the transferred source image) under private
+`/daten/beelink-runtime/dns`, with LAN-only port bindings and no host networking.
 It replaces the combination of dnsmasq plus TLS wrapper only in this test:
 original www/dev/git/Home Assistant names resolve to beelink IPv4
 192.168.178.142 and its currently present ULA IPv6. Mirror www16/dev16
@@ -665,7 +670,8 @@ Nextcloud or redirect its HTTP service.
 
 Unlike the app network, this dedicated DNS-only bridge permits outgoing DNS
 queries to the existing Fritz!Box resolver 192.168.178.1 for other names.
-It has no attachment to the app network and no published port 53/853.
+It has no attachment to the app network. UDP/TCP 53 and TCP 853 bind only the
+approved Beelink IPv4 and ULA IPv6 addresses.
 CoreDNS runs as root as on the source to read the private TLS key, mounted
 read-only; the root filesystem is read-only too. No package install is needed.
 
@@ -684,10 +690,10 @@ ssh -t hannes@beelink 'sudo systemd-run --unit=beelink-staging-add-dns \
 ```
 
 This repeats the controlled restart including DNS, all app TLS checks and
-UDP/TCP/DoT queries. The controller explicitly permits only this dedicated
-DNS bridge as an exception to internal app networking, with read-only mounts
-and no ports; it rejects other containers attached to that bridge.
-No boot activation or LAN/router/client DNS changes are made.
+UDP/TCP/DoT queries. The controller permits only this dedicated DNS bridge as an exception to
+internal app networking, with read-only mounts and the exact six dual-stack
+DNS/DoT bindings; it rejects other containers attached to that bridge.
+No boot activation or LAN/router/client DNS changes are made by the preparation.
 Public DNS binding, client settings, renewal and final production lifecycle
 integration remain cutover steps.
 
@@ -695,7 +701,8 @@ The controller refresh and actual cold restart including DNS succeeded on
 2026-11-17 at 11:13:56 (beelink local time). All managed containers restarted;
 Home Assistant and the existing camera PostgreSQL retained their identities
 and start times. Verified TLS, artifact download and UDP/TCP/DoT queries passed.
-The installed staging unit remains disabled for boot.
+At that time the isolated DNS test had no host port bindings; the current
+prepared Compose configuration adds only the allowlisted LAN IPv4/IPv6 bindings.
 
 ### Authenticated ownCloud WebDAV check
 
@@ -796,6 +803,115 @@ production, change routing or transfer certificate renewal.
 GitLab final reconciliation completed successfully on beelink on 2026-11-17
 at 15:08:01 local time, including readiness, encryption-secret validation and
 unchanged protected services. Do not repeat its backup or restore.
+
+### GitLab host shell runner
+
+The existing Latitude runner registration is preserved from the private seed;
+only its executor changes to `shell`. After the Latitude application fence is
+in place, install the GitLab Runner package on beelink and prepare its
+root-protected configuration:
+
+```bash
+sudo python3 ~/git/dockerApache/monitoring/prepare-beelink-gitlab-runner.py --prepare
+sudo python3 ~/git/dockerApache/monitoring/prepare-beelink-gitlab-runner.py --activate
+```
+
+Activation installs a systemd override so jobs run as the unprivileged
+`gitlab-runner` account, verifies the registration, and enables the service.
+The runner token is never printed or stored in Git. Shell executors run CI
+scripts directly on the host: keep this runner restricted to trusted projects,
+and do not add the Docker socket or privileged access. Do not activate it while
+the Latitude runner with the same registration can still start.
+GitLab SSH is bound to beelink's LAN IPv4 at TCP 40022; this Compose binding
+does not add a router/WAN forward.
+The production preparation uses implicit TLS for SMTP port 465. Existing
+prepared configurations are not rewritten automatically. Verify SMTP
+authentication and delivery separately, without exposing credentials in logs.
+
+### Prepare existing production configuration during a maintenance window
+
+The feature changes are not applied by updating the checkout. The managed
+stack must be stopped before its existing configuration can be migrated.
+Before stopping it, record which Beelink job and certificate timers are active,
+pause those timers, and wait for any active jobs or certificate renewal to
+finish. Do not pause or modify unrelated timers.
+Record whether each public web socket is active as well. Stopping the
+production service also stops its dependent sockets; starting production
+does not automatically start them again.
+
+Build the artifact image from the repository root before stopping the stack;
+the pinned `githubArtifactsPy` source must be present in the checkout:
+
+```bash
+docker build -t local/github-artifacts:production-features \
+  -f github-artifacts/Dockerfile .
+```
+
+Then, directly on beelink:
+
+```bash
+sudo systemctl stop beelink-production.service
+sudo python3 monitoring/prepare-beelink-production-features.py --prepare-stopped
+sudo python3 monitoring/control-beelink-staging.py --install-prepared
+sudo systemctl start beelink-production.service
+```
+
+Each command must succeed before running the next. The preparation refuses
+running managed containers or conflicting job/renewal locks, preserves private
+copies under `/daten/beelink-runtime/production-feature-backups/`, and changes
+only the GitLab, WordPress, artifacts and DNS configurations. It does not
+reseed data or import databases. The installed controller checks the desired
+configuration before startup and checks the actual container configuration
+after recreation. Startup repeats DNS and artifact checks; the WordPress HTTP
+and GitLab SMTP delivery still require separate operational checks. Resume
+only the web sockets and timers that were active before the window after
+verifying service health. For example, if both web sockets were active:
+
+```bash
+sudo systemctl start beelink-public-web-80.socket beelink-public-web-443.socket
+```
+
+Check their listening status and public HTTPS reachability. If any command
+fails, inspect the error and printed private backup location before attempting
+recovery; do not start public sockets while the managed stack is unhealthy.
+
+If an earlier feature migration left the two WordPress `wp-config.php` files
+owned by root with mode 0600, PHP cannot read them. With the managed stack
+stopped, repair only those files (UID/GID 33 is the container's www-data):
+
+```bash
+sudo chown 33:33 /daten/beelink-runtime/wordpress/www/dev.mxtracks/wordpress/wp-config.php /daten/beelink-runtime/wordpress/www/mxdocs/wordpress/wp-config.php
+sudo chmod 600 /daten/beelink-runtime/wordpress/www/dev.mxtracks/wordpress/wp-config.php /daten/beelink-runtime/wordpress/www/mxdocs/wordpress/wp-config.php
+```
+
+An already completed migration does not rewrite these files on a retry. Install
+the updated controller before attempting startup, then inspect service status
+and logs if startup fails.
+
+### Encrypted Beelink configuration backup
+
+Use the existing external Restic repository; the helper never initializes a
+repository or falls back to the T7. Keep `/etc/restic/beelink.env` root-owned
+with mode 0600 and set only:
+
+```dotenv
+RESTIC_REPOSITORY=sftp:backup-host:/existing/restic/repository
+RESTIC_PASSWORD_FILE=/root/.config/restic/beelink-password
+```
+
+The password file must also be root-only and outside `/daten` and the
+repository. Local repositories are accepted only on a different filesystem.
+Run the backup directly on beelink:
+
+```bash
+sudo python3 ~/git/dockerApache/monitoring/backup-beelink-config.py --backup-and-verify
+```
+
+It encrypts `/etc`, installed Beelink helpers, and the selected private runtime
+configuration (not databases or user data), then restores the new snapshot to a
+private `/run` directory and compares file hashes and symlink targets before
+recording success. Missing configuration, an unavailable repository, or a
+failed restore is an error; no snapshot is reported as verified.
 
 ### Remaining application database snapshots
 
@@ -1041,6 +1157,23 @@ Keep existing router rules recorded for rollback. External HTTP-01 renewal
 testing and transfer of timer ownership still follow the router change;
 do not disable Latitude renewal beforehand.
 
+### LAN split DNS and DNS-over-TLS
+
+The prepared CoreDNS Compose service publishes UDP/TCP 53 and TCP 853 only on
+beelink's LAN IPv4 `192.168.178.142` and ULA IPv6
+`fdf4:be15:98e0:0:7a55:36ff:fe0e:d07e`. These are LAN bindings, not router
+WAN forwards. The Corefile overrides the selected site A/AAAA records and
+forwards other queries to the Fritz!Box resolver.
+
+Publishing the service does not change router DHCP, Android Private DNS or
+other clients. Configure LAN clients (or router DHCP, if it distributes the
+chosen resolver unchanged) to use `192.168.178.142`; clients using IPv6 must
+select the ULA explicitly. Android DoT clients must use the configured
+`nextcloud.mxtracks.info` TLS name and port 853; Android Private DNS set to
+Automatic may bypass this resolver. Do not advertise the ULA as a public AAAA
+record or forward ports 53/853 from the WAN. The production preparation only
+binds and verifies sockets; it does not edit the router or client settings.
+
 Before changing router forwarding, freeze all source writers and perform
 final incremental file reconciliation plus fresh database backups/restores.
 An initial live seed cannot safely become production after hours of new
@@ -1223,6 +1356,26 @@ The source fence completed at 17:26:13 CET: four hannes entries plus the three
 system cron mirror entries were disabled. Root's crontab is empty; only the
 two unrelated upstream Git checks remain in hannes' crontab. The private
 rollback inventory is `/var/backups/latitude-cutover-jobs/20261117T172613115557`.
+
+The cron fence alone does not prevent application startup after reboot. Only
+after beelink owns production writes, directly on Latitude run:
+
+```bash
+sudo python3 ~/git/dockerApache/monitoring/fence-latitude-application-starts.py --fence
+```
+
+This persistently masks native Apache/PHP-FPM/GlassFish/WildFly and the
+GitHub-artifact service, disables automatic restart for the migrated Apache,
+ownCloud, GitLab and GitLab Runner containers, and records their original
+states under `/var/backups/latitude-application-fence/`. It does not touch
+databases, DNS, Home Assistant, camera PostgreSQL, Certbot renewal or unrelated
+services. Do not run before the coordinated handover. Rollback requires the
+printed private inventory path:
+
+```bash
+sudo python3 ~/git/dockerApache/monitoring/fence-latitude-application-starts.py \
+  --rollback /var/backups/latitude-application-fence/<timestamp>
+```
 
 Destination scheduling activation is still pending. Copying the source schedules without
 adapting their implementations is unsafe: the PostgreSQL backup still dumps
