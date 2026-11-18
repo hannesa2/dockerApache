@@ -76,13 +76,29 @@ MATOMO_CONFIG_PATH=/pfad/zur/config.ini.php ./private/private.sh --decrypt matom
 ./private/private.sh --crypt camera-postgres
 ```
 
-Der Standardpfad für Matomo ist auf Linux
+Auf beelink verwendet Matomo die aktive Docker-Konfiguration unter
+`/daten/beelink-runtime/matomo/www/piwik/config/config.ini.php`.
+`./private/private.sh --crypt` bleibt ein Aufruf als normaler Benutzer:
+für diese geschützte Datei fragt das Skript bei Bedarf nach sudo und liest
+eine temporäre Kopie mit Modus 0600. Vor der Passphrase-Abfrage prüft ein
+tatsächlicher Leseversuch den Zugriff; Fehler werden ausdrücklich gemeldet.
+GPG, verschlüsselte Dateien und der
+lokale Prüfstatus bleiben beim Benutzer; die temporäre Klartextkopie wird
+auch bei Fehlern entfernt. Die Prüfung liest dieselbe aktive Datei mit
+`sudo -n`; ohne gültige sudo-Berechtigung meldet sie einen Fehler statt einen
+veralteten Stand zu bestätigen. Eine Entschlüsselung in das geschützte
+Produktionsverzeichnis erfolgt nicht automatisch; dafür einen beschreibbaren
+`MATOMO_CONFIG_PATH` angeben und die Wiederherstellung bewusst durchführen.
+
+Der Standardpfad für Matomo ist auf anderen Linux-Hosts
 `/srv/www/vhosts/mxdocs/piwik/config/config.ini.php` und auf macOS
 `/Users/hannes/server/apache/www/mxdocs/piwik/config/config.ini.php`.
 Nach erfolgreichem Verschlüsseln merken sich Verschlüsselung, Entschlüsselung
 und Prüfung den dafür verwendeten Matomo-Pfad lokal pro Host und Checkout.
 `MATOMO_CONFIG_PATH` hat Vorrang; beim nächsten erfolgreichen Verschlüsseln
-wird der angegebene Pfad als neuer lokaler Standard gespeichert. In einem
+wird der angegebene Pfad als neuer lokaler Standard gespeichert. Ausnahme:
+beelink verwendet ohne explizites `MATOMO_CONFIG_PATH` immer die aktive
+Docker-Konfiguration statt eines früher gespeicherten Pfads. In einem
 frischen Checkout ohne lokalen Prüfstatus gilt wieder der Plattform-Standard.
 Verschlüsselte Kopien liegen in `private-config/gpg/`; beim Entschlüsseln
 erhalten sie den kurzen Hostnamen vor `.enc`, z. B.

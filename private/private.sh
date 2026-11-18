@@ -37,6 +37,8 @@ host="$(hostname -s)" || {
 
 plain_paths=()
 cipher_paths=()
+protected_matomo=/daten/beelink-runtime/matomo/www/piwik/config/config.ini.php
+needs_matomo_sudo=0
 for target in "${targets[@]}"; do
   case "$target" in
     apache) plain="$ROOT/apache/.env"; cipher="$CIPHER_DIR/apache.env" ;;
@@ -54,10 +56,12 @@ for target in "${targets[@]}"; do
     }
   done
   if [[ "$mode" == --crypt ]]; then
-    [[ -f "$plain" && -r "$plain" ]] || {
+    if [[ "$host" == beelink && "$plain" == "$protected_matomo" ]]; then
+      needs_matomo_sudo=1
+    elif [[ ! -f "$plain" || ! -r "$plain" ]]; then
       echo "ERROR: Cannot read $target configuration: $plain" >&2
       exit 1
-    }
+    fi
   else
     [[ -f "$cipher.enc" && -r "$cipher.enc" ]] || {
       echo "ERROR: Cannot read encrypted $target configuration: $cipher.enc" >&2
@@ -71,6 +75,18 @@ for target in "${targets[@]}"; do
   plain_paths+=("$plain")
   cipher_paths+=("$cipher")
 done
+
+if [[ "$needs_matomo_sudo" -eq 1 ]]; then
+  sudo -v || {
+    echo "ERROR: sudo authentication is required to read the Matomo configuration." >&2
+    exit 1
+  }
+  if ! sudo -n test -f "$protected_matomo" ||
+     ! sudo -n cat -- "$protected_matomo" > /dev/null; then
+    echo "ERROR: Cannot read Matomo configuration with sudo: $protected_matomo" >&2
+    exit 1
+  fi
+fi
 
 if [[ -z "${CRYPT_PASS:-}" ]]; then
   [[ -t 0 ]] || { echo "ERROR: A terminal or CRYPT_PASS is required." >&2; exit 1; }
@@ -91,14 +107,25 @@ if [[ "$mode" == --crypt ]]; then
   export CRYPT_PASS_CONFIRM
   mkdir -p -- "$CIPHER_DIR"
 fi
-trap 'unset CRYPT_PASS CRYPT_PASS_CONFIRM' EXIT
+private_snapshot=''
+trap '[[ -z "$private_snapshot" ]] || rm -f -- "$private_snapshot"; unset CRYPT_PASS CRYPT_PASS_CONFIRM' EXIT
 
 for i in "${!plain_paths[@]}"; do
   if [[ "$mode" == --crypt ]]; then
     fingerprint="$(python3 "$ROOT/private/check-private.py" prepare "${plain_paths[$i]}")"
-    "$HELPER" --crypt --output "${cipher_paths[$i]}.enc" "${plain_paths[$i]}"
+    input="${plain_paths[$i]}"
+    if [[ "$host" == beelink && "$input" == "$protected_matomo" ]]; then
+      private_snapshot="$(mktemp "${TMPDIR:-/tmp}/private-matomo.XXXXXXXX")"
+      sudo -n cat -- "$input" > "$private_snapshot"
+      input="$private_snapshot"
+    fi
+    "$HELPER" --crypt --output "${cipher_paths[$i]}.enc" "$input"
     python3 "$ROOT/private/check-private.py" record "${plain_paths[$i]}" \
       "${cipher_paths[$i]}.enc" "$fingerprint"
+    if [[ -n "$private_snapshot" ]]; then
+      rm -f -- "$private_snapshot"
+      private_snapshot=''
+    fi
   else
     "$HELPER" --output "${plain_paths[$i]}" "${cipher_paths[$i]}"
   fi

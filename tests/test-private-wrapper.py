@@ -303,6 +303,71 @@ class PrivateWrapperTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Invalid Matomo monitoring record", result.stderr)
 
+    def test_beelink_encrypts_protected_matomo_without_root_owned_outputs(self):
+        sudo = self.root / "bin/sudo"
+        sudo.write_text(
+            '#!/bin/sh\n'
+            '[ "$1" != -v ] || exit 0\n'
+            '[ "$1" != -n ] || shift\n'
+            'case "$1" in\n'
+            'test) [ "$2" != -r ] ;;\n'
+            'cat) [ "$3" = /daten/beelink-runtime/matomo/www/piwik/config/config.ini.php ] '
+            '|| exit 9; exec /bin/cat "$TEST_MATOMO_INPUT" ;;\n'
+            '*) exit 8 ;;\n'
+            'esac\n'
+        )
+        sudo.chmod(0o755)
+        env = dict(self.env, TEST_HOST="beelink",
+                   TEST_MATOMO_INPUT=str(self.plain[2]), TMPDIR=str(self.root))
+        del env["MATOMO_CONFIG_PATH"]
+        result = self.run_wrapper("--crypt", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        cipher = self.root / "private-config/gpg/matomo-config.ini.beelink.enc"
+        self.assertTrue(cipher.is_file())
+        self.assertEqual(cipher.stat().st_uid, os.getuid())
+        self.assertEqual(list(self.root.glob("private-matomo.*")), [])
+        self.assertNotIn("private configuration 2", result.stdout + result.stderr)
+        result = subprocess.run(
+            ["python3", str(self.root / "private/check-private.py"), "check"],
+            env=env, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.plain[2].write_text("changed active configuration")
+        result = subprocess.run(
+            ["python3", str(self.root / "private/check-private.py"), "check"],
+            env=env, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("matomo: plaintext or encrypted copy changed", result.stderr)
+
+        cipher.unlink()
+        helper = self.root / "buildSrc/scripts/decrypt.sh"
+        helper.write_text("#!/bin/sh\nexit 1\n")
+        result = self.run_wrapper("--crypt", "matomo", env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(list(self.root.glob("private-matomo.*")), [])
+        self.assertFalse(cipher.exists())
+
+    def test_beelink_read_failure_is_reported_before_encryption(self):
+        sudo = self.root / "bin/sudo"
+        sudo.write_text(
+            '#!/bin/sh\n'
+            '[ "$1" != -v ] || exit 0\n'
+            '[ "$1" != -n ] || shift\n'
+            'case "$1" in\n'
+            'test) exit 0 ;;\n'
+            'cat) exit 1 ;;\n'
+            '*) exit 8 ;;\n'
+            'esac\n'
+        )
+        sudo.chmod(0o755)
+        env = dict(self.env, TEST_HOST="beelink")
+        del env["MATOMO_CONFIG_PATH"]
+        result = self.run_wrapper("--crypt", env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ERROR: Cannot read Matomo configuration with sudo:", result.stderr)
+        self.assertFalse((self.root / "private-config/gpg").exists())
+
     def test_git_shell_notice_for_selected_commands(self):
         result = self.run_wrapper("--crypt", "apache")
         self.assertEqual(result.returncode, 0, result.stderr)

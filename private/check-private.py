@@ -8,8 +8,39 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import contextlib
 
 ROOT = Path(__file__).resolve().parent.parent
+BEELINK_MATOMO = Path("/daten/beelink-runtime/matomo/www/piwik/config/config.ini.php")
+
+
+def short_hostname():
+    return subprocess.check_output(["hostname", "-s"], text=True).strip()
+
+
+def privileged_matomo(path):
+    return path == BEELINK_MATOMO and short_hostname().lower() == "beelink"
+
+
+def canonical(path):
+    return path if privileged_matomo(path) else path.resolve()
+
+
+@contextlib.contextmanager
+def plaintext_stream(path):
+    if privileged_matomo(path):
+        process = subprocess.Popen(["sudo", "-n", "cat", "--", str(path)],
+                                   stdout=subprocess.PIPE)
+        try:
+            yield process.stdout
+        finally:
+            process.stdout.close()
+            status = process.wait()
+            if status:
+                raise subprocess.CalledProcessError(status, process.args)
+    else:
+        with path.open("rb") as stream:
+            yield stream
 
 
 def state_directory():
@@ -40,7 +71,7 @@ def key_for(directory, create=False):
 
 def digest(path, key):
     mac = hmac.new(key, digestmod=hashlib.sha256)
-    with path.open("rb") as stream:
+    with plaintext_stream(path) as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             mac.update(chunk)
     return mac.hexdigest()
@@ -50,6 +81,8 @@ def matomo_path(directory, cipher):
     override = os.environ.get("MATOMO_CONFIG_PATH")
     if override:
         return Path(override)
+    if short_hostname().lower() == "beelink":
+        return BEELINK_MATOMO
     if (directory / "key").exists():
         key = key_for(directory)
         name = hmac.new(key, str(cipher.resolve()).encode(), hashlib.sha256).hexdigest()
@@ -83,9 +116,10 @@ def write_record(directory, key, plain, cipher, expected):
 
 
 def check_one(directory, key, name, plain, cipher):
-    if not plain.exists() and not cipher.exists():
+    protected = privileged_matomo(plain)
+    if not protected and not plain.exists() and not cipher.exists():
         return False
-    if not plain.is_file():
+    if not protected and not plain.is_file():
         print(f"WARNING: {name}: plaintext missing or inaccessible: {plain}", file=sys.stderr)
         return True
     if not cipher.is_file():
@@ -111,9 +145,9 @@ def check_one(directory, key, name, plain, cipher):
 def main():
     directory = state_directory()
     if len(sys.argv) == 3 and sys.argv[1] == "prepare":
-        print(digest(Path(sys.argv[2]).resolve(), key_for(directory, create=True)))
+        print(digest(canonical(Path(sys.argv[2])), key_for(directory, create=True)))
     elif len(sys.argv) == 5 and sys.argv[1] == "record":
-        write_record(directory, key_for(directory), Path(sys.argv[2]).resolve(),
+        write_record(directory, key_for(directory), canonical(Path(sys.argv[2])),
                      Path(sys.argv[3]).resolve(), sys.argv[4])
     elif len(sys.argv) == 2 and sys.argv[1] in ("check", "matomo-path"):
         host = subprocess.run(["hostname", "-s"], check=True, text=True,
@@ -133,7 +167,7 @@ def main():
             ("camera-postgres", ROOT / "camera-postgres/.env", cipher_dir / f"camera-postgres.env.{host}.enc"),
             ("mxserver-postgres", ROOT / "mxserver-postgres/.env", cipher_dir / f"mxserver-postgres.env.{host}.enc"),
         ]
-        warnings = [check_one(directory, key, name, plain.resolve(), cipher.resolve())
+        warnings = [check_one(directory, key, name, canonical(plain), cipher.resolve())
                     for name, plain, cipher in entries]
         if any(warnings):
             print("WARNING: update with ./private/private.sh --crypt <target>, then commit the .enc files.",
