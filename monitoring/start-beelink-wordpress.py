@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare the original WordPress sites in isolated Docker, without a cutover."""
+"""Prepare the original WordPress sites in Docker, without a public cutover."""
 
 import argparse
 import fcntl
@@ -47,8 +47,8 @@ def patch_config(text, schema, username, password):
         if count != 1:
             raise RuntimeError("Expected exactly one literal WordPress " + key)
     settings = {
-        "DISABLE_WP_CRON": "true", "AUTOMATIC_UPDATER_DISABLED": "true",
-        "WP_HTTP_BLOCK_EXTERNAL": "true", "WP_ENVIRONMENT_TYPE": "'staging'",
+        "DISABLE_WP_CRON": "false", "AUTOMATIC_UPDATER_DISABLED": "true",
+        "WP_HTTP_BLOCK_EXTERNAL": "false", "WP_ENVIRONMENT_TYPE": "'production'",
     }
     domain = next(site[0] for site in SITES if site[2] == schema)
     for key in ("WP_HOME", "WP_SITEURL"):
@@ -67,7 +67,6 @@ def patch_config(text, schema, username, password):
     if text.count("<?php") != 1:
         raise RuntimeError("Expected one PHP opening tag")
     additions = "\n".join(f"define('{key}', {value});" for key, value in settings.items())
-    # Only the internal test vhost supplies this header; no public port is bound.
     return text.replace("<?php", "<?php\n" + additions + """
 if (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') {
     $_SERVER['HTTPS'] = 'on';
@@ -79,14 +78,17 @@ def compose_config(image):
     return {
         "name": "beelink-wordpress",
         "services": {"apache": {
-            "image": image, "restart": "no", "networks": ["isolated"],
+            "image": image, "restart": "no", "networks": ["isolated", "egress"],
             "volumes": [
                 apps.mount(WORK / "www", "/var/www/html"),
                 apps.mount(WORK / "vhosts", "/etc/apache2/sites-enabled", True),
                 apps.mount(WORK / "logs", "/var/log/apache2"),
             ],
         }},
-        "networks": {"isolated": {"external": True, "name": "beelink-databases_isolated"}},
+        "networks": {
+            "isolated": {"external": True, "name": "beelink-databases_isolated"},
+            "egress": {"driver": "bridge"},
+        },
     }
 
 
@@ -148,8 +150,53 @@ def prepare(image):
     config = compose_config(image)
     path = WORK / "compose.json"
     if path.exists():
-        if json.loads(path.read_text()) != config or not (WORK / "prepared").is_file():
+        existing = json.loads(path.read_text())
+        previous = json.loads(json.dumps(config))
+        previous["services"]["apache"]["networks"] = ["isolated"]
+        previous["networks"].pop("egress")
+        if existing not in (config, previous) or not (WORK / "prepared").is_file():
             raise RuntimeError("Existing original WordPress configuration differs or is incomplete")
+        if existing == previous:
+            ids = apps.capture(*COMPOSE, "ps", "--all", "--quiet").splitlines()
+            if any(apps.capture("docker", "inspect", "--format", "{{.State.Running}}", item)
+                   != "false" for item in ids):
+                raise RuntimeError("Stop WordPress before enabling production features")
+            changes = {}
+            for _, subdir, _ in SITES:
+                target = WORK / "www" / subdir / "wordpress/wp-config.php"
+                if target.is_symlink() or not target.is_file():
+                    raise RuntimeError("Missing or unsafe WordPress configuration")
+                text = target.read_text()
+                for key, old, new in (("DISABLE_WP_CRON", "true", "false"),
+                                      ("WP_HTTP_BLOCK_EXTERNAL", "true", "false"),
+                                      ("WP_ENVIRONMENT_TYPE", "'staging'", "'production'")):
+                    old_line = f"define('{key}', {old});"
+                    new_line = f"define('{key}', {new});"
+                    if text.count(old_line) + text.count(new_line) != 1:
+                        raise RuntimeError("Unexpected WordPress setting: " + key)
+                    text = text.replace(old_line, new_line)
+                changes[target] = text
+            for target, text in changes.items():
+                subdir = target.parent.parent.name
+                backup_dir = WORK / "config-before-production-features" / subdir
+                if backup_dir.is_symlink() or backup_dir.parent.is_symlink():
+                    raise RuntimeError("Unsafe WordPress configuration backup directory")
+                backup_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+                backup = backup_dir / "wp-config.php"
+                if backup.is_symlink():
+                    raise RuntimeError("Unsafe WordPress configuration backup")
+                if not backup.exists():
+                    shutil.copy2(target, backup)
+                    backup.chmod(0o600)
+                temporary = target.with_name("wp-config.php.production-tmp")
+                if temporary.exists() or temporary.is_symlink():
+                    raise RuntimeError("Existing WordPress temporary configuration")
+                shutil.copy2(target, temporary)
+                temporary.write_text(text)
+                os.chown(temporary, 33, 33)
+                temporary.chmod(0o600)
+                temporary.replace(target)
+            apps.write_json(path, config)
         return
     for name in ("www", "vhosts", "logs"):
         if (WORK / name).exists():
@@ -259,8 +306,14 @@ def verify(upgrade_www=False):
             apps.run(*wp, "core", "update-db")
         probe = f"""
 global $wpdb;
-if (DB_HOST !== '{DATABASE}' || DB_NAME !== '{schema}' || !DISABLE_WP_CRON) {{
+if (DB_HOST !== '{DATABASE}' || DB_NAME !== '{schema}' || DISABLE_WP_CRON
+    || WP_HTTP_BLOCK_EXTERNAL) {{
     WP_CLI::error('Unexpected WordPress staging configuration');
+}}
+$http = wp_remote_get('https://api.wordpress.org/core/version-check/1.7/', ['timeout' => 15]);
+if (is_wp_error($http) || wp_remote_retrieve_response_code($http) < 200
+    || wp_remote_retrieve_response_code($http) >= 300) {{
+    WP_CLI::error('WordPress outbound HTTP request failed');
 }}
 if ((int) $wpdb->get_var("SELECT COUNT(*) FROM {{$wpdb->posts}}") < 1) {{
     WP_CLI::error('Expected restored WordPress posts');

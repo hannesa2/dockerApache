@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -22,11 +23,12 @@ require_once ABSPATH . 'wp-settings.php';
 
 
 class BeelinkWordPressTest(unittest.TestCase):
-    def test_patch_preserves_original_urls_and_disables_scheduled_activity(self):
+    def test_patch_preserves_original_urls_and_enables_wordpress_runtime_features(self):
         result = WP.patch_config(CONFIG, "wordpress", "wp_test_123", "secret123")
-        for key in ("DISABLE_WP_CRON", "AUTOMATIC_UPDATER_DISABLED", "WP_HTTP_BLOCK_EXTERNAL"):
-            self.assertIn(f"define('{key}', true);", result)
-        self.assertIn("define('WP_ENVIRONMENT_TYPE', 'staging');", result)
+        self.assertIn("define('DISABLE_WP_CRON', false);", result)
+        self.assertIn("define('AUTOMATIC_UPDATER_DISABLED', true);", result)
+        self.assertIn("define('WP_HTTP_BLOCK_EXTERNAL', false);", result)
+        self.assertIn("define('WP_ENVIRONMENT_TYPE', 'production');", result)
         self.assertIn("define('DB_HOST', 'beelink-databases-native-mysql-1');", result)
         self.assertIn("define('DB_USER', 'wp_test_123');", result)
         self.assertIn("define('DB_PASSWORD', 'secret123');", result)
@@ -35,11 +37,11 @@ class BeelinkWordPressTest(unittest.TestCase):
         self.assertNotIn("old\\'password", result)
         self.assertLess(result.index("DISABLE_WP_CRON"), result.index("wp-settings.php"))
 
-    def test_existing_staging_constants_are_replaced(self):
+    def test_existing_constants_are_replaced_with_production_values(self):
         source = CONFIG.replace("<?php", "<?php\ndefine('DISABLE_WP_CRON', false);")
         result = WP.patch_config(source, "wordpress", "wp_test_123", "secret")
         self.assertEqual(result.count("define('DISABLE_WP_CRON'"), 1)
-        self.assertIn("define('DISABLE_WP_CRON', true);", result)
+        self.assertIn("define('DISABLE_WP_CRON', false);", result)
 
     def test_repairs_known_source_typo_only_in_returned_copy(self):
         source = CONFIG.replace("<?php\n", "<?php\nd/** source header */\n", 1)
@@ -67,12 +69,58 @@ class BeelinkWordPressTest(unittest.TestCase):
         service = config["services"]["apache"]
         self.assertEqual(service["image"], "sha256:apache")
         self.assertEqual(service["restart"], "no")
-        self.assertEqual(service["networks"], ["isolated"])
+        self.assertEqual(set(service["networks"]), {"isolated", "egress"})
         for key in ("ports", "network_mode", "privileged"):
             self.assertNotIn(key, service)
         for mount in service["volumes"]:
             self.assertTrue(mount["source"].startswith("/daten/beelink-runtime/wordpress/"))
             self.assertFalse(mount["bind"]["create_host_path"])
+        self.assertEqual(config["networks"]["isolated"]["name"],
+                         "beelink-databases_isolated")
+        self.assertEqual(config["networks"]["egress"], {"driver": "bridge"})
+
+    def test_runtime_probe_checks_wordpress_http_egress(self):
+        source = WP.verify.__code__.co_consts
+        probes = [item for item in source if isinstance(item, str) and "wp_remote_get" in item]
+        self.assertEqual(len(probes), 1)
+        self.assertIn("WP_HTTP_BLOCK_EXTERNAL", probes[0])
+        self.assertIn("WordPress outbound HTTP request failed", probes[0])
+
+    def test_existing_wordpress_upgrades_without_changing_credentials(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            with patch.object(WP, "WORK", work), \
+                    patch.object(WP.apps, "capture", side_effect=["container", "false"]), \
+                    patch.object(WP.os, "chown") as chown:
+                desired = WP.compose_config("image")
+                previous = json.loads(json.dumps(desired))
+                previous["services"]["apache"]["networks"] = ["isolated"]
+                previous["networks"].pop("egress")
+                (work / "compose.json").write_text(json.dumps(previous))
+                (work / "prepared").touch()
+                old = ("<?php\n"
+                       "define('DB_PASSWORD', 'keep-secret');\n"
+                       "define('DISABLE_WP_CRON', true);\n"
+                       "define('WP_HTTP_BLOCK_EXTERNAL', true);\n"
+                       "define('WP_ENVIRONMENT_TYPE', 'staging');\n")
+                for _, subdir, _ in WP.SITES:
+                    target = work / "www" / subdir / "wordpress/wp-config.php"
+                    target.parent.mkdir(parents=True)
+                    target.write_text(old)
+                WP.prepare("image")
+                self.assertEqual(json.loads((work / "compose.json").read_text()), desired)
+                for _, subdir, _ in WP.SITES:
+                    target = work / "www" / subdir / "wordpress/wp-config.php"
+                    self.assertIn("define('DB_PASSWORD', 'keep-secret');", target.read_text())
+                    self.assertIn("define('DISABLE_WP_CRON', false);", target.read_text())
+                    self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+                    chown.assert_any_call(target.with_name("wp-config.php.production-tmp"),
+                                          33, 33)
+                    self.assertEqual((work / "config-before-production-features" /
+                                      subdir / "wp-config.php").read_text(), old)
+                self.assertEqual(chown.call_count, len(WP.SITES))
+                WP.prepare("image")
+                self.assertEqual(chown.call_count, len(WP.SITES))
 
     def test_original_vhosts_not_copy_or_mirror_domains(self):
         for domain, subdir, schema in WP.SITES:
