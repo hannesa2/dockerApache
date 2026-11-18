@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start isolated ownCloud/GitLab restore tests, not production."""
+"""Prepare Beelink ownCloud and GitLab with the approved production features."""
 
 import argparse
 import fcntl
@@ -55,7 +55,7 @@ if (file_put_contents($target, "<?php\n\$CONFIG = " . var_export($CONFIG, true) 
 }
 """
 
-GITLAB_CONFIG = """external_url 'https://git.mxtracks.info'
+RESTRICTED_GITLAB_CONFIG = """external_url 'https://git.mxtracks.info'
 letsencrypt['enable'] = false
 nginx['listen_port'] = 80
 nginx['listen_https'] = false
@@ -66,6 +66,19 @@ gitlab_rails['incoming_email_enabled'] = false
 gitlab_rails['usage_ping_enabled'] = false
 gitlab_rails['backup_path'] = '/var/opt/gitlab/backups'
 sidekiq['enable'] = false
+prometheus_monitoring['enable'] = false
+"""
+GITLAB_CONFIG = """external_url 'https://git.mxtracks.info'
+letsencrypt['enable'] = false
+nginx['listen_port'] = 80
+nginx['listen_https'] = false
+gitlab_rails['gitlab_shell_ssh_port'] = 40022
+gitlab_rails['smtp_enable'] = true
+gitlab_rails['gitlab_email_enabled'] = true
+gitlab_rails['incoming_email_enabled'] = false
+gitlab_rails['usage_ping_enabled'] = false
+gitlab_rails['backup_path'] = '/var/opt/gitlab/backups'
+sidekiq['enable'] = true
 prometheus_monitoring['enable'] = false
 """
 
@@ -123,7 +136,10 @@ def compose_config(owncloud_environment):
             },
             "gitlab": {
                 "image": GITLAB_IMAGE, "hostname": "git.mxtracks.info",
-                "restart": "no", "networks": ["isolated"], "shm_size": "256m",
+                "restart": "no", "networks": ["isolated", "egress"],
+                "ports": [{"target": 22, "published": 40022,
+                           "host_ip": "192.168.178.142", "protocol": "tcp"}],
+                "shm_size": "256m",
                 "volumes": [
                     mount(APPS / "gitlab/config", "/etc/gitlab"),
                     mount(APPS / "gitlab/logs", "/var/log/gitlab"),
@@ -131,8 +147,41 @@ def compose_config(owncloud_environment):
                 ],
             },
         },
-        "networks": {"isolated": {"external": True, "name": "beelink-databases_isolated"}},
+        "networks": {
+            "isolated": {"external": True, "name": "beelink-databases_isolated"},
+            "egress": {"driver": "bridge"},
+        },
     }
+
+
+def gitlab_config(source):
+    source = source.replace("\r\n", "\n").rstrip()
+    settings = {}
+    for key in ("smtp_address", "smtp_port"):
+        matches = re.findall(
+            rf"""(?m)^[ \t]*gitlab_rails\[['"]{key}['"]\][ \t]*=[ \t]*"""
+            r"""(?:"([^"\n]*)"|'([^'\n]*)'|([0-9]+))[ \t]*(?:#.*)?$""",
+            source)
+        if len(matches) != 1:
+            raise RuntimeError("Latitude GitLab SMTP relay settings are incomplete or ambiguous")
+        value = next((value for value in matches[0] if value != ""), None)
+        if value is None:
+            raise RuntimeError("Latitude GitLab SMTP relay settings are incomplete")
+        settings[key] = value
+    if not settings["smtp_address"].strip() or any(
+            char.isspace() for char in settings["smtp_address"]):
+        raise RuntimeError("Latitude GitLab SMTP relay address is invalid")
+    try:
+        port = int(settings["smtp_port"])
+    except ValueError as error:
+        raise RuntimeError("Latitude GitLab SMTP relay port is invalid") from error
+    if not 1 <= port <= 65535:
+        raise RuntimeError("Latitude GitLab SMTP relay port is invalid")
+    config = source + "\n\n" + GITLAB_CONFIG
+    if port == 465:
+        config += ("gitlab_rails['smtp_tls'] = true\n"
+                   "gitlab_rails['smtp_enable_starttls_auto'] = false\n")
+    return config
 
 
 def wait_http(service, command, attempts=180):
@@ -153,19 +202,43 @@ def wait_http(service, command, attempts=180):
     raise RuntimeError("HTTP readiness timed out: " + service)
 
 
-def upgrade_readonly_config(existing, desired):
+def upgrade_restricted_config(existing, desired):
     previous = json.loads(json.dumps(desired))
+    gitlab = previous["services"]["gitlab"]
+    gitlab.pop("ports")
+    gitlab["networks"] = ["isolated"]
+    previous["networks"].pop("egress")
     for volume in previous["services"]["owncloud-app"]["volumes"]:
         if volume["target"] == "/mnt/data/files":
             volume["read_only"] = True
-    if existing != previous:
+    legacy = json.loads(json.dumps(previous))
+    legacy["services"]["owncloud-app"]["volumes"][1]["read_only"] = False
+    if existing not in (previous, legacy):
         raise RuntimeError("Existing application configuration differs; inspect before proceeding")
-    ids = capture(*COMPOSE, "ps", "--all", "--quiet", "owncloud-app").splitlines()
+    ids = capture(*COMPOSE, "ps", "--all", "--quiet").splitlines()
     for container_id in ids:
         if capture("docker", "inspect", "--format", "{{.State.Running}}", container_id) != "false":
-            raise RuntimeError("Stop the test ownCloud container before changing its data mount")
-    print("Correcting stopped ownCloud test mount to writable; "
-          "only the isolated beelink copy can change.", flush=True)
+            raise RuntimeError("Stop every beelink application before enabling production features")
+    config_path = APPS / "gitlab/config/gitlab.rb"
+    if config_path.is_symlink() or not config_path.is_file() \
+            or config_path.read_text() != RESTRICTED_GITLAB_CONFIG:
+        raise RuntimeError("Existing GitLab configuration differs; inspect before proceeding")
+    backup = config_path.with_name("gitlab.rb.before-production-features")
+    if backup.exists() or backup.is_symlink():
+        raise RuntimeError("GitLab configuration backup already exists; inspect before proceeding")
+    source = RUNTIME / "host-configuration/srv/gitlab/config/gitlab.rb"
+    if source.is_symlink() or not source.is_file():
+        raise RuntimeError("Missing original Latitude GitLab configuration")
+    new_gitlab_config = gitlab_config(source.read_text())
+    shutil.copyfile(config_path, backup)
+    backup.chmod(0o600)
+    temporary = config_path.with_suffix(".rb.tmp")
+    temporary.write_text(new_gitlab_config)
+    temporary.chmod(0o600)
+    temporary.replace(config_path)
+    write_json(APPS / "compose.json", desired)
+    print("GitLab workers, SMTP and SSH configuration prepared; no services were started.",
+          flush=True)
 
 
 def prepare():
@@ -185,9 +258,12 @@ def prepare():
             raise RuntimeError("Previous preparation incomplete; inspect before retrying")
         existing = json.loads(config_path.read_text())
         if existing != config:
-            upgrade_readonly_config(existing, config)
-            write_json(config_path, config)
+            upgrade_restricted_config(existing, config)
         return
+    source_gitlab_config = RUNTIME / "host-configuration/srv/gitlab/config/gitlab.rb"
+    if source_gitlab_config.is_symlink() or not source_gitlab_config.is_file():
+        raise RuntimeError("Missing original Latitude GitLab configuration")
+    prepared_gitlab_config = gitlab_config(source_gitlab_config.read_text())
     if any((APPS / name).exists() for name in ("owncloud", "gitlab", "redis")):
         raise RuntimeError("Unmanaged application directories exist; inspect before retrying")
     for path in ("owncloud/volume/config", "owncloud/volume/sessions",
@@ -208,7 +284,9 @@ def prepare():
         raise RuntimeError("GitLab encryption secrets missing")
     shutil.copyfile(secrets, APPS / "gitlab/config/gitlab-secrets.json")
     os.chmod(APPS / "gitlab/config/gitlab-secrets.json", 0o600)
-    (APPS / "gitlab/config/gitlab.rb").write_text(GITLAB_CONFIG)
+    gitlab_rb = APPS / "gitlab/config/gitlab.rb"
+    gitlab_rb.write_text(prepared_gitlab_config)
+    gitlab_rb.chmod(0o600)
     write_json(config_path, config)
     (APPS / "prepared").touch()
 
@@ -287,7 +365,11 @@ def start_gitlab():
         dc("exec", "-T", "gitlab", "gitlab-rake", "gitlab:doctor:secrets",
            stdout=subprocess.DEVNULL)
         completed.write_text(backup_id + "\n")
-    print("GitLab restore and readiness checked. Sidekiq, email and runners remain disabled.", flush=True)
+    sidekiq = capture(*COMPOSE, "exec", "-T", "gitlab", "gitlab-ctl", "status", "sidekiq")
+    if not sidekiq.startswith("run: sidekiq:"):
+        raise RuntimeError("GitLab Sidekiq is not running")
+    print("GitLab restore and readiness checked in isolation; Sidekiq and SMTP are enabled, "
+          "and the host shell runner is prepared separately.", flush=True)
 
 
 def main():

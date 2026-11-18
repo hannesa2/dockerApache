@@ -2,6 +2,7 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -30,7 +31,7 @@ class BeelinkApplicationsTest(unittest.TestCase):
                 APPS.main()
             listdir.assert_not_called()
 
-    def test_compose_uses_internal_network_without_host_ports(self):
+    def test_compose_publishes_only_gitlab_ssh_and_keeps_database_network_internal(self):
         config = APPS.compose_config({
             "OWNCLOUD_DB_PASSWORD": "private",
             "OWNCLOUD_DB_HOST": "production",
@@ -38,12 +39,19 @@ class BeelinkApplicationsTest(unittest.TestCase):
         })
         self.assertEqual(config["name"], "beelink-apps")
         self.assertEqual(config["networks"]["isolated"]["name"], "beelink-databases_isolated")
-        for service in config["services"].values():
-            self.assertEqual(service["networks"], ["isolated"])
+        self.assertEqual(config["networks"]["egress"], {"driver": "bridge"})
+        for name, service in config["services"].items():
             self.assertEqual(service["restart"], "no")
             self.assertNotIn("privileged", service)
             self.assertNotIn("network_mode", service)
-            self.assertNotIn("ports", service)
+            if name == "gitlab":
+                self.assertEqual(set(service["networks"]), {"isolated", "egress"})
+                self.assertEqual(service["ports"], [
+                    {"target": 22, "published": 40022, "host_ip": "192.168.178.142",
+                     "protocol": "tcp"}])
+            else:
+                self.assertEqual(service["networks"], ["isolated"])
+                self.assertNotIn("ports", service)
             for mount in service.get("volumes", []):
                 self.assertFalse(mount["bind"]["create_host_path"])
                 self.assertNotIn("docker.sock", mount["source"])
@@ -55,13 +63,37 @@ class BeelinkApplicationsTest(unittest.TestCase):
         self.assertFalse(next(m for m in cloud["volumes"]
                               if m["target"] == "/mnt/data/files")["read_only"])
 
-    def test_gitlab_side_effects_disabled(self):
-        for setting in (
-                "sidekiq['enable'] = false",
-                "gitlab_rails['smtp_enable'] = false",
-                "gitlab_rails['gitlab_email_enabled'] = false",
-                "letsencrypt['enable'] = false"):
-            self.assertIn(setting, APPS.GITLAB_CONFIG)
+    def test_gitlab_keeps_existing_smtp_values_and_enables_workers_mail_and_ssh(self):
+        source = ("gitlab_rails['smtp_address'] = 'relay.example.invalid'\n"
+                  "gitlab_rails['smtp_port'] = 587\n"
+                  "gitlab_rails['smtp_user_name'] = 'gitlab'\n"
+                  "gitlab_rails['smtp_password'] = 'private'\n")
+        result = APPS.gitlab_config(source)
+        self.assertIn(source, result)
+        self.assertIn("sidekiq['enable'] = true", result)
+        self.assertIn("gitlab_rails['smtp_enable'] = true", result)
+        self.assertIn("gitlab_rails['gitlab_email_enabled'] = true", result)
+        self.assertIn("gitlab_rails['gitlab_shell_ssh_port'] = 40022", result)
+        self.assertIn("letsencrypt['enable'] = false", result)
+        self.assertNotIn("gitlab_rails['smtp_tls'] = true", result)
+        self.assertNotIn("private", APPS.GITLAB_CONFIG)
+        implicit_tls = APPS.gitlab_config(source.replace("smtp_port'] = 587",
+                                                          "smtp_port'] = 465"))
+        self.assertIn("gitlab_rails['smtp_tls'] = true", implicit_tls)
+        self.assertIn("gitlab_rails['smtp_enable_starttls_auto'] = false", implicit_tls)
+        with self.assertRaisesRegex(RuntimeError, "SMTP relay settings are incomplete"):
+            APPS.gitlab_config("gitlab_rails['smtp_enable'] = true")
+        for source in (
+                "# gitlab_rails['smtp_address'] = 'relay.example.invalid'\n"
+                "# gitlab_rails['smtp_port'] = 587",
+                "gitlab_rails['smtp_address'] = 'relay.example.invalid'\n"
+                "gitlab_rails['smtp_address'] = 'other.example.invalid'\n"
+                "gitlab_rails['smtp_port'] = 587",
+                "gitlab_rails['smtp_address'] = 'relay.example.invalid'\n"
+                "gitlab_rails['smtp_port'] = 70000"):
+            with self.subTest(source=source):
+                with self.assertRaises(RuntimeError):
+                    APPS.gitlab_config(source)
 
     def test_owncloud_status_requires_real_database_query(self):
         status = {"installed": True, "maintenance": False,
@@ -96,18 +128,48 @@ class BeelinkApplicationsTest(unittest.TestCase):
             run.assert_not_called()
             sleep.assert_not_called()
 
-    def test_only_exact_old_readonly_config_is_migrated(self):
-        desired = APPS.compose_config({})
-        previous = json.loads(json.dumps(desired))
-        previous["services"]["owncloud-app"]["volumes"][1]["read_only"] = True
-        with patch.object(APPS, "capture", side_effect=["test-container", "false"]):
-            APPS.upgrade_readonly_config(previous, desired)
-        with patch.object(APPS, "capture", side_effect=["test-container", "true"]):
-            with self.assertRaisesRegex(RuntimeError, "Stop the test"):
-                APPS.upgrade_readonly_config(previous, desired)
-        previous["services"]["owncloud-app"]["networks"] = ["production"]
-        with self.assertRaisesRegex(RuntimeError, "configuration differs"):
-            APPS.upgrade_readonly_config(previous, desired)
+    def test_only_exact_restricted_compose_is_upgraded_after_all_apps_stop(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            work = root / "apps"
+            config_path = work / "gitlab/config/gitlab.rb"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(APPS.RESTRICTED_GITLAB_CONFIG)
+            source_config = root / "host-configuration/srv/gitlab/config/gitlab.rb"
+            source_config.parent.mkdir(parents=True)
+            source_config.write_text(
+                "gitlab_rails['smtp_address'] = 'relay.example.invalid'\n"
+                "gitlab_rails['smtp_port'] = 587\n")
+            desired = APPS.compose_config({})
+            previous = json.loads(json.dumps(desired))
+            previous["services"]["gitlab"].pop("ports")
+            previous["services"]["gitlab"]["networks"] = ["isolated"]
+            previous["networks"].pop("egress")
+            compose_path = work / "compose.json"
+            compose_path.parent.mkdir(parents=True, exist_ok=True)
+            compose_path.write_text(json.dumps(previous))
+            (work / "prepared").touch()
+            compose = ["docker", "compose", "-f", str(compose_path)]
+            with patch.object(APPS, "APPS", work), \
+                    patch.object(APPS, "RUNTIME", root), \
+                    patch.object(APPS, "ROOTFS", root / "rootfs"), \
+                    patch.object(APPS, "COMPOSE", compose), \
+                    patch.object(APPS, "capture", side_effect=["test-container", "false"]):
+                APPS.upgrade_restricted_config(previous, desired)
+            self.assertEqual(json.loads(compose_path.read_text()), desired)
+            self.assertTrue((config_path.parent /
+                             "gitlab.rb.before-production-features").is_file())
+            self.assertIn("smtp_enable'] = true", config_path.read_text())
+            with patch.object(APPS, "capture", side_effect=["test-container", "true"]), \
+                    patch.object(APPS, "APPS", work), \
+                    patch.object(APPS, "RUNTIME", root), \
+                    patch.object(APPS, "ROOTFS", root / "rootfs"), \
+                    patch.object(APPS, "COMPOSE", compose):
+                with self.assertRaisesRegex(RuntimeError, "Stop every"):
+                    APPS.upgrade_restricted_config(previous, desired)
+            previous["services"]["owncloud-app"]["networks"] = ["production"]
+            with self.assertRaisesRegex(RuntimeError, "configuration differs"):
+                APPS.upgrade_restricted_config(previous, desired)
 
 
 if __name__ == "__main__":
