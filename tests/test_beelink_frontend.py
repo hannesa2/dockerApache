@@ -124,15 +124,24 @@ class BeelinkFrontendTest(unittest.TestCase):
         self.assertIn("!rename(", FRONT.OWNCLOUD_PROXY)
 
     def test_https_probe_verifies_hostname_and_chain_without_insecure_flag(self):
-        with patch.object(FRONT.apps, "capture", return_value="content\n200") as capture:
+        with patch.object(FRONT.subprocess, "check_output",
+                          return_value="content\n200") as capture:
             self.assertEqual(FRONT.response("www.mxtracks.info", "/wordpress/"),
                              ["content", "200"])
-        command = capture.call_args.args
+        command = capture.call_args.args[0]
         self.assertIn("--resolve", command)
         self.assertIn("www.mxtracks.info:443:127.0.0.1", command)
         self.assertNotIn("-k", command)
         self.assertNotIn("--insecure", command)
         self.assertNotIn("--location", command)
+
+    def test_https_probe_preserves_empty_body_and_reports_invalid_output(self):
+        with patch.object(FRONT.subprocess, "check_output", return_value="\n500"):
+            self.assertEqual(FRONT.response("www.mxtracks.info", "/wordpress/"),
+                             ["", "500"])
+        with patch.object(FRONT.subprocess, "check_output", return_value="500"):
+            with self.assertRaisesRegex(RuntimeError, "Malformed HTTP probe response"):
+                FRONT.response("www.mxtracks.info", "/wordpress/")
 
     def test_matomo_only_adds_original_proxy_host_to_isolated_config(self):
         source = ('[database]\nhost = "beelink-databases-native-mysql-1"\n'

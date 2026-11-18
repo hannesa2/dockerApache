@@ -100,12 +100,15 @@ class BeelinkStagingControlTest(unittest.TestCase):
             CONTROL.validate_config("project", candidate, ("app",))
 
     def test_starts_only_selected_existing_services_without_restore_or_build(self):
-        with patch.object(CONTROL, "preflight"), \
+        with patch.object(CONTROL, "preflight") as preflight, \
                 patch.object(CONTROL, "check_mount") as mount, \
                 patch.object(CONTROL, "wait_databases") as databases, \
                 patch.object(CONTROL, "wait_applications") as applications, \
                 patch.object(CONTROL, "run") as run:
             CONTROL.start()
+        self.assertEqual(preflight.call_args_list[0].kwargs,
+                         {"allow_stopped_recreation": True})
+        self.assertEqual(len(preflight.call_args_list), 2)
         self.assertEqual(mount.call_count, len(CONTROL.STACKS))
         databases.assert_called_once()
         applications.assert_called_once()
@@ -130,6 +133,58 @@ class BeelinkStagingControlTest(unittest.TestCase):
                 CONTROL.start()
             run.assert_not_called()
             stop.assert_not_called()
+
+    def test_preflight_allows_recreation_only_when_all_managed_containers_stopped(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            for name in ("frontend/frontend-report.json", "wordpress/wordpress-report.json",
+                         "artifacts/artifacts-report.json", "dns/dns-report.json",
+                         "java-web/copy-sites-retired"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            compose = root / "compose.json"
+            compose.write_text(json.dumps(config()))
+            original_stat = Path.stat
+
+            def root_stat(path, **kwargs):
+                result = original_stat(path, **kwargs)
+                if path in (root, compose):
+                    values = list(result)
+                    values[4] = 0
+                    return os.stat_result(values)
+                return result
+
+            def capture(*args):
+                if args[:3] == ("docker", "network", "inspect"):
+                    return '[{"Internal": true}]'
+                if "--format" in args:
+                    return "false"
+                raise AssertionError(args)
+
+            with patch.object(CONTROL, "RUNTIME", root), \
+                    patch.object(CONTROL, "STACKS", (("project", compose, ("app",)),)), \
+                    patch.object(CONTROL, "check_mount"), \
+                    patch.object(CONTROL, "validate_config"), \
+                    patch.object(CONTROL, "capture", side_effect=capture), \
+                    patch.object(Path, "stat", root_stat):
+                CONTROL.preflight(allow_stopped_recreation=True)
+            def running_capture(*args):
+                if args[:3] == ("docker", "network", "inspect"):
+                    return '[{"Internal": true}]'
+                if "--format" in args:
+                    return "true"
+                return json.dumps([{"HostConfig": {"RestartPolicy": {"Name": "always"}},
+                                    "NetworkSettings": {"Networks": {}}}])
+            with patch.object(CONTROL, "RUNTIME", root), \
+                    patch.object(CONTROL, "STACKS", (("project", compose, ("app",)),)), \
+                    patch.object(CONTROL, "check_mount"), \
+                    patch.object(CONTROL, "validate_config"), \
+                    patch.object(CONTROL, "capture", side_effect=running_capture), \
+                    patch.object(Path, "stat", root_stat):
+                with self.assertRaisesRegex(RuntimeError, "bypasses staging"):
+                    CONTROL.preflight(allow_stopped_recreation=True)
 
     def test_start_failure_stops_only_managed_stacks(self):
         with patch.object(CONTROL, "preflight"), patch.object(CONTROL, "check_mount"), \
@@ -217,7 +272,7 @@ class BeelinkStagingControlTest(unittest.TestCase):
             source.mkdir()
             for name in ("control-beelink-staging.py", "start-beelink-apps.py",
                          "start-beelink-frontend.py", "start-beelink-artifacts.py",
-                         "start-beelink-dns.py"):
+                         "start-beelink-dns.py", "prepare-beelink-gitlab-runner.py"):
                 (source / name).write_text("# fixture\n")
             unit = root / "beelink-production.service"
             library = root / "libexec"
@@ -242,7 +297,22 @@ class BeelinkStagingControlTest(unittest.TestCase):
         candidate = {"name": "beelink-dns", "services": {"dns": {
             "restart": "no", "networks": ["resolver"], "read_only": True, "volumes": []}},
             "networks": {"resolver": {"driver": "bridge"}}}
+        candidate["services"]["dns"]["ports"] = [
+            {"target": port, "published": port, "host_ip": host, "protocol": protocol}
+            for host in ("192.168.178.142", "fdf4:be15:98e0:0:7a55:36ff:fe0e:d07e")
+            for port, protocol in ((53, "udp"), (53, "tcp"), (853, "tcp"))]
         CONTROL.validate_config("beelink-dns", candidate, ("dns",))
+        candidate["services"]["dns"]["ports"].pop()
+        with self.assertRaisesRegex(RuntimeError, "published ports"):
+            CONTROL.validate_config("beelink-dns", candidate, ("dns",))
+        candidate["services"]["dns"]["ports"].append(
+            {"target": 443, "published": 443, "host_ip": "0.0.0.0", "protocol": "tcp"})
+        with self.assertRaisesRegex(RuntimeError, "published ports"):
+            CONTROL.validate_config("beelink-dns", candidate, ("dns",))
+        candidate["services"]["dns"]["ports"] = [
+            {"target": port, "published": port, "host_ip": host, "protocol": protocol}
+            for host in ("192.168.178.142", "fdf4:be15:98e0:0:7a55:36ff:fe0e:d07e")
+            for port, protocol in ((53, "udp"), (53, "tcp"), (853, "tcp"))]
         candidate["services"]["dns"]["read_only"] = False
         with self.assertRaisesRegex(RuntimeError, "read-only"):
             CONTROL.validate_config("beelink-dns", candidate, ("dns",))
@@ -250,6 +320,54 @@ class BeelinkStagingControlTest(unittest.TestCase):
         candidate["networks"]["resolver"]["external"] = True
         with self.assertRaisesRegex(RuntimeError, "DNS network"):
             CONTROL.validate_config("beelink-dns", candidate, ("dns",))
+
+    def test_dns_docker_binding_check_requires_both_addresses(self):
+        expected = CONTROL.dns_bindings()
+        self.assertEqual(len(expected), 3)
+        self.assertTrue(all(len(item) == 2 for item in expected.values()))
+        actual = {key: list(reversed(value)) for key, value in expected.items()}
+        actual["53/udp"][0] = dict(actual["53/udp"][0],
+                                   HostIp="fdf4:be15:98e0::7a55:36ff:fe0e:d07e")
+        self.assertEqual(CONTROL.normalized_bindings(actual),
+                         CONTROL.normalized_bindings(expected))
+        actual["53/udp"].pop()
+        self.assertNotEqual(CONTROL.normalized_bindings(actual),
+                            CONTROL.normalized_bindings(expected))
+
+    def test_application_egress_and_ssh_publication_are_exactly_scoped(self):
+        candidate = {"name": "beelink-apps", "services": {
+            "gitlab": {"restart": "no", "networks": ["isolated", "egress"],
+                       "ports": [{"target": 22, "published": 40022,
+                                  "host_ip": "192.168.178.142", "protocol": "tcp"}],
+                       "volumes": []}},
+            "networks": {
+                "isolated": {"external": True, "name": "beelink-databases_isolated"},
+                "egress": {"driver": "bridge"}}}
+        CONTROL.validate_config("beelink-apps", candidate, ("gitlab",))
+        candidate["services"]["gitlab"]["ports"][0]["host_ip"] = "0.0.0.0"
+        with self.assertRaisesRegex(RuntimeError, "published ports"):
+            CONTROL.validate_config("beelink-apps", candidate, ("gitlab",))
+        candidate["services"]["gitlab"]["ports"][0]["host_ip"] = "192.168.178.142"
+        candidate["services"]["gitlab"]["networks"].append("outside")
+        with self.assertRaisesRegex(RuntimeError, "network"):
+            CONTROL.validate_config("beelink-apps", candidate, ("gitlab",))
+
+    def test_artifact_service_allows_writes_only_to_its_data_mount(self):
+        candidate = {"name": "beelink-artifacts", "services": {"artifacts": {
+            "restart": "no", "networks": ["isolated"], "read_only": True, "tmpfs": ["/tmp"],
+            "volumes": [
+                {"type": "bind", "source": "/daten/artifacts/files", "target": "/app/files",
+                 "read_only": False, "bind": {"create_host_path": False}},
+                {"type": "bind", "source": "/daten/artifacts/parameter.yml",
+                 "target": "/app/parameter.yml", "read_only": True,
+                 "bind": {"create_host_path": False}}]}},
+            "networks": {"isolated": {
+                "external": True, "name": "beelink-databases_isolated"}}}
+        with patch.object(Path, "exists", return_value=True):
+            CONTROL.validate_config("beelink-artifacts", candidate, ("artifacts",))
+            candidate["services"]["artifacts"]["volumes"][1]["read_only"] = False
+            with self.assertRaisesRegex(RuntimeError, "Only artifact files"):
+                CONTROL.validate_config("beelink-artifacts", candidate, ("artifacts",))
 
 
 if __name__ == "__main__":

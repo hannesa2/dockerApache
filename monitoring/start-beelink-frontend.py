@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import subprocess
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -430,10 +431,12 @@ def configure_matomo():
 
 def response(domain, route, https=True):
     port, scheme = (443, "https") if https else (80, "http")
-    result = apps.capture(
+    result = subprocess.check_output([
         *COMPOSE, "exec", "-T", "frontend", "curl", "--silent", "--show-error",
         "--max-time", "40", "--resolve", f"{domain}:{port}:127.0.0.1",
-        "--write-out", "\n%{http_code}", f"{scheme}://{domain}{route}")
+        "--write-out", "\n%{http_code}", f"{scheme}://{domain}{route}"], text=True)
+    if "\n" not in result:
+        raise RuntimeError(f"Malformed HTTP probe response: {domain}{route}")
     return result.rsplit("\n", 1)
 
 

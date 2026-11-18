@@ -3,6 +3,7 @@
 
 import argparse
 import fcntl
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -64,6 +65,21 @@ def check_mount():
         raise RuntimeError("Expected encrypted T7 ext4 filesystem is not mounted; refusing startup")
 
 
+def normalized_bindings(bindings):
+    return {key: sorted((str(ipaddress.ip_address(binding["HostIp"])), binding["HostPort"])
+                        for binding in values)
+            for key, values in bindings.items() if values}
+
+
+def dns_bindings():
+    return {
+        f"{port}/{protocol}": [
+            {"HostIp": host_ip, "HostPort": str(port)}
+            for host_ip in ("192.168.178.142", "fdf4:be15:98e0:0:7a55:36ff:fe0e:d07e")]
+        for port, protocol in ((53, "udp"), (53, "tcp"), (853, "tcp"))
+    }
+
+
 def validate_config(project, config, services):
     dns = project == "beelink-dns"
     network_name = "resolver" if dns else "isolated"
@@ -73,18 +89,46 @@ def validate_config(project, config, services):
         raise RuntimeError("Missing staging services: " + project)
     for name in services:
         service = config["services"][name]
-        if (service.get("restart") != "no" or service.get("ports")
-                or service.get("privileged") or service.get("network_mode")):
+        expected_networks = {network_name}
+        if (project == "beelink-apps" and name == "gitlab") or project == "beelink-wordpress":
+            expected_networks.add("egress")
+        if service.get("restart") != "no" or service.get("privileged") \
+                or service.get("network_mode"):
             raise RuntimeError("Staging isolation/restart policy differs: " + project + "/" + name)
         networks = service.get("networks")
-        if not isinstance(networks, (list, dict)) or set(networks) != {network_name}:
+        if not isinstance(networks, (list, dict)) or set(networks) != expected_networks:
             raise RuntimeError("Unexpected staging service network")
+        ports = service.get("ports", [])
+        if project == "beelink-apps" and name == "gitlab":
+            expected_ports = [{"target": 22, "published": 40022,
+                               "host_ip": "192.168.178.142", "protocol": "tcp"}]
+        elif dns:
+            expected_ports = [
+                {"target": port, "published": port, "host_ip": host_ip,
+                 "protocol": protocol}
+                for host_ip in ("192.168.178.142",
+                                "fdf4:be15:98e0:0:7a55:36ff:fe0e:d07e")
+                for port, protocol in ((53, "udp"), (53, "tcp"), (853, "tcp"))
+            ]
+        else:
+            expected_ports = []
+        if ports != expected_ports:
+            raise RuntimeError("Unexpected published ports: " + project + "/" + name)
         for mount in service.get("volumes", []):
             source = Path(mount["source"])
             if (mount.get("type") != "bind" or not source.is_relative_to("/daten")
                     or not mount.get("bind", {}).get("create_host_path") is False
                     or not source.exists() or not source.resolve().is_relative_to("/daten")):
                 raise RuntimeError("Missing or unsafe staging bind mount")
+        if project == "beelink-artifacts":
+            volumes = service.get("volumes", [])
+            mount_modes = {mount["target"]: mount.get("read_only", False)
+                           for mount in volumes}
+            if (not service.get("read_only")
+                    or len(volumes) != len(mount_modes)
+                    or mount_modes != {"/app/files": False, "/app/parameter.yml": True}
+                    or service.get("tmpfs") != ["/tmp"]):
+                raise RuntimeError("Only artifact files may be writable in the artifact service")
     network = config.get("networks", {}).get(network_name, {})
     if dns:
         if network != {"driver": "bridge"}:
@@ -92,6 +136,11 @@ def validate_config(project, config, services):
         if not config["services"]["dns"].get("read_only") or any(
                 not mount.get("read_only") for mount in config["services"]["dns"]["volumes"]):
             raise RuntimeError("DNS filesystem and configuration must remain read-only")
+    elif project in ("beelink-apps", "beelink-wordpress"):
+        if config.get("networks", {}).get("egress") != {"driver": "bridge"}:
+            raise RuntimeError("Unexpected application egress network definition")
+        if network.get("name") != "beelink-databases_isolated" or not network.get("external"):
+            raise RuntimeError("Unexpected staging network reference")
     elif project == "beelink-databases":
         if network.get("internal") is not True:
             raise RuntimeError("Database network must be internal")
@@ -99,7 +148,7 @@ def validate_config(project, config, services):
         raise RuntimeError("Unexpected staging network reference")
 
 
-def preflight():
+def preflight(allow_stopped_recreation=False):
     check_mount()
     if (RUNTIME.is_symlink() or RUNTIME.stat().st_uid != 0
             or RUNTIME.stat().st_mode & 0o077):
@@ -116,16 +165,52 @@ def preflight():
     network = json.loads(capture("docker", "network", "inspect", "beelink-databases_isolated"))[0]
     if not network["Internal"]:
         raise RuntimeError("Existing staging network is not internal")
+    if allow_stopped_recreation:
+        stopped = True
+        for project, _, services in STACKS:
+            for service in services:
+                name = project + "-" + service + "-1"
+                if capture("docker", "inspect", "--format", "{{.State.Running}}", name) != "false":
+                    stopped = False
+        if stopped:
+            print("Validated desired Compose configuration; stopped containers will be recreated.",
+                  flush=True)
+            return
     for project, _, services in STACKS:
         for service in services:
             name = project + "-" + service + "-1"
             details = json.loads(capture("docker", "inspect", name))[0]
+            expected_networks = {
+                "beelink-dns_resolver" if project == "beelink-dns"
+                else "beelink-databases_isolated"}
+            if (project == "beelink-apps" and service == "gitlab") \
+                    or project == "beelink-wordpress":
+                expected_networks.add(project + "_egress")
+            expected_bindings = {}
+            if project == "beelink-apps" and service == "gitlab":
+                expected_bindings = {
+                    "22/tcp": [{"HostIp": "192.168.178.142", "HostPort": "40022"}]}
+            elif project == "beelink-dns":
+                expected_bindings = dns_bindings()
             if (details["HostConfig"]["RestartPolicy"]["Name"] != "no"
-                    or details["HostConfig"].get("PortBindings")
-                    or set(details["NetworkSettings"]["Networks"]) != {
-                        "beelink-dns_resolver" if project == "beelink-dns"
-                        else "beelink-databases_isolated"}):
+                    or normalized_bindings(details["HostConfig"].get("PortBindings") or {})
+                    != normalized_bindings(expected_bindings)
+                    or set(details["NetworkSettings"]["Networks"]) != expected_networks):
                 raise RuntimeError("Existing container bypasses staging restrictions: " + name)
+            if project == "beelink-artifacts":
+                mounts = {mount["Destination"]: mount["RW"] for mount in details["Mounts"]}
+                if (not details["HostConfig"]["ReadonlyRootfs"]
+                        or mounts != {"/app/files": True, "/app/parameter.yml": False}
+                        or set(details["HostConfig"].get("Tmpfs") or {}) != {"/tmp"}):
+                    raise RuntimeError("Artifact container has an unexpected writable path")
+    for project, service in (("beelink-apps", "gitlab"),
+                             ("beelink-wordpress", "apache")):
+        network = json.loads(capture("docker", "network", "inspect",
+                                     project + "_egress"))[0]
+        if (network["Driver"] != "bridge" or network.get("Internal")
+                or [item["Name"] for item in network.get("Containers", {}).values()]
+                != [project + "-" + service + "-1"]):
+            raise RuntimeError("Egress network must contain only its approved application")
     dns_network = json.loads(capture("docker", "network", "inspect",
                                      "beelink-dns_resolver"))[0]
     if dns_network["Driver"] != "bridge" or dns_network.get("Internal") or any(
@@ -214,7 +299,7 @@ def wait_applications(attempts=180):
 
 
 def start():
-    preflight()
+    preflight(allow_stopped_recreation=True)
     try:
         for index, (project, path, services) in enumerate(STACKS):
             check_mount()
@@ -222,6 +307,7 @@ def start():
                 "up", "-d", "--pull", "never", "--no-build", *services)
             if index == 0:
                 wait_databases()
+        preflight()
         wait_applications()
         helper = Path(__file__).with_name("start-beelink-artifacts.py")
         # Existing prepared artifacts are read-only; this also repeats frontend
@@ -237,11 +323,12 @@ def start():
         raise
 
 
-def install():
+def install(prepared=False):
     install_database_snapshot()
-    preflight()
+    preflight(allow_stopped_recreation=prepared)
     sources = ("control-beelink-staging.py", "start-beelink-apps.py",
-               "start-beelink-frontend.py", "start-beelink-artifacts.py", "start-beelink-dns.py")
+               "start-beelink-frontend.py", "start-beelink-artifacts.py",
+               "start-beelink-dns.py", "prepare-beelink-gitlab-runner.py")
     if LIBEXEC.is_symlink() or UNIT.is_symlink():
         raise RuntimeError("Managed installation paths must not be symlinks")
     if UNIT.exists() and UNIT.read_text() != UNIT_TEXT:
@@ -334,7 +421,8 @@ def restart_test():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
-    for option in ("check", "start", "stop", "install-and-start", "install-and-restart-test"):
+    for option in ("check", "start", "stop", "install-prepared",
+                   "install-and-start", "install-and-restart-test"):
         group.add_argument("--" + option, action="store_true")
     args = parser.parse_args()
     os.umask(0o077)
@@ -349,7 +437,7 @@ def main():
         elif args.start:
             start()
         else:
-            install()
+            install(prepared=args.install_prepared)
     # Release the installer lock before systemd starts the controller.
     if args.install_and_start:
         run("systemctl", "start", "beelink-production.service")
