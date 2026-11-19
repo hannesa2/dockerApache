@@ -806,6 +806,27 @@ unchanged protected services. Do not repeat its backup or restore.
 
 ### GitLab host shell runner
 
+The earlier shell-runner approach below is superseded by a separately registered
+Docker executor on beelink. It does not reuse the Latitude registration. In
+GitLab, create an instance runner restricted to the `beelink-docker` tag, with
+untagged jobs disabled. Enter its authentication token in the private
+`/etc/beelink-docker-runner/token` file, then run:
+
+```bash
+sudo python3 monitoring/install-beelink-docker-runner.py --install
+```
+
+The manager mounts the host Docker socket, which grants it host-level control.
+Only trusted administrators should manage the runner. Job containers do not
+receive the socket and are not privileged; Android emulators, Docker-in-Docker
+and jobs requiring special devices need separate setup. The runner is tied to
+the production unit and encrypted T7. After an explicit production stop and
+start, start `beelink-docker-runner.service` again, just as for the web sockets.
+The runner's private configuration under `/etc` is covered by the encrypted
+configuration backup. A real tagged pipeline must be run to verify job execution.
+
+The previous alternative was:
+
 The existing Latitude runner registration is preserved from the private seed;
 only its executor changes to `shell`. After the Latitude application fence is
 in place, install the GitLab Runner package on beelink and prepare its
