@@ -1606,6 +1606,17 @@ HTTP response and removes the additions on failure. The page has no credentials;
 its hostname selection is not an access-control boundary (the TCP proxy hides
 original client IPs). Java-port LAN restrictions remain separate.
 
+For an existing, unmodified intranet installation, update the page in place:
+
+```bash
+sudo python3 ~/git/dockerApache/monitoring/install-beelink-intranet.py --update
+```
+
+The update checks the existing page and vhost before replacing the page,
+verifies the served response and restores the previous page if verification
+fails. It does not reload Apache. The inventory is static, not a live health
+report. Domain links require DNS to resolve to the intended host.
+
 The user requested direct LAN access to both applications and administration
 consoles. The prepared `publish-beelink-java-lan.py --install` helper exposes:
 

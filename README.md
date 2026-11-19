@@ -496,23 +496,11 @@ PHP 8.4-FPM and its required extensions must be installed and active. If the
 config test fails, disable the new snippet with
 `sudo a2disconf latitude-matomo-php84` before making other Apache changes.
 
-### ownCloud on mac2016
+### ownCloud
 
-mac2016 is the current ownCloud source while latitude is offline. The local
-instance was upgraded from 10.16.6 to 10.16.7 using its existing code, files,
-and PostgreSQL database; no latitude sync was needed or performed. It runs in
-the dedicated `owncloud/server:10.16.7` PHP runtime, isolated from the main PHP
-8.3 Apache container.
-
-The application remains in maintenance mode, and Apache denies `/owncloud`
-until service is intentionally enabled. Do not run
-`owncloud/sync-latitude.sh` or install its scheduled job while latitude is
-offline: it would copy stale latitude data over mac2016.
-
-To open access on mac2016, run `./owncloud/activate-proxy.sh`, then disable
-ownCloud maintenance mode. For the close-access procedure, see
-[`owncloud/README.md`](owncloud/README.md#enable-owncloud-access). Proxy
-activation does not require a sync marker.
+Production runs on beelink; mac2016 hosts the standby mirror. The scheduled
+beelink job synchronizes the mirror daily. See
+[`owncloud/README.md`](owncloud/README.md) for endpoints, storage, and job status.
 
 ### Hourly system availability monitor
 

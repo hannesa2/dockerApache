@@ -5,49 +5,28 @@ export LANG=C
 umask 077
 
 if [[ "$(id -u)" -ne 0 ]]; then
-    echo "ERROR: Run this backup as root on latitude." >&2
+    echo "ERROR: Run this backup as root on beelink." >&2
     exit 1
 fi
 
-SOURCE_ROOT="/daten/owncloud"
-SOURCE_DATA="$SOURCE_ROOT/data"
+[[ "${BEELINK_PRODUCTION:-0}" == 1 && "$(hostname -s)" == beelink ]] ||
+    { echo "ERROR: Expected beelink production mode." >&2; exit 1; }
+[[ "$(findmnt -rn -M /daten -t ext4 -o UUID)" == c0c42461-ae4c-4edb-a993-bba94a05ed6c ]] ||
+    { echo "ERROR: Expected encrypted T7." >&2; exit 1; }
+SOURCE_ROOT="/daten/beelink-runtime/apps/owncloud/volume"
+SOURCE_DATA="/daten/beelink-runtime/rootfs/daten/owncloud/data"
 SOURCE_APPS="$SOURCE_ROOT/apps"
 SOURCE_CONFIG="$SOURCE_ROOT/config"
-SOURCE_ENV="$SOURCE_ROOT/production.env"
-SOURCE_COMPOSE="/home/hannes/git/dockerApache/owncloud/latitude-compose.yml"
-SOURCE_PROJECT="owncloud-staging"
-SOURCE_WEB="owncloud-staging-owncloud-1"
-SOURCE_DB="owncloud-staging-db-1"
-SOURCE_SERVICE="owncloud"
-SOURCE_DB_SERVICE="db"
-SOURCE_DB_USER="owncloud_stage"
-SOURCE_STATUS_URL="http://127.0.0.1:8093/status.php"
-SOURCE_STATUS_RESOLVE=()
-if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
-    [[ "$(hostname -s)" == beelink ]] || { echo "ERROR: Expected beelink." >&2; exit 1; }
-    [[ "$(findmnt -rn -M /daten -t ext4 -o UUID)" == c0c42461-ae4c-4edb-a993-bba94a05ed6c ]] ||
-        { echo "ERROR: Expected encrypted T7." >&2; exit 1; }
-    SOURCE_ROOT="/daten/beelink-runtime/apps/owncloud/volume"
-    SOURCE_DATA="/daten/beelink-runtime/rootfs/daten/owncloud/data"
-    SOURCE_APPS="$SOURCE_ROOT/apps"
-    SOURCE_CONFIG="$SOURCE_ROOT/config"
-    SOURCE_ENV="/dev/null"
-    SOURCE_COMPOSE="/daten/beelink-runtime/apps/compose.json"
-    SOURCE_PROJECT="beelink-apps"
-    SOURCE_WEB="beelink-apps-owncloud-app-1"
-    SOURCE_DB="beelink-databases-owncloud-1"
-    SOURCE_SERVICE="owncloud-app"
-    SOURCE_DB_USER="beelink_restore"
-    SOURCE_STATUS_URL="https://www.mxtracks.info/owncloud/status.php"
-    SOURCE_STATUS_RESOLVE=(--resolve www.mxtracks.info:443:127.0.0.1)
-fi
-
-MIRROR_HOST="mac2016"
-SSH_ALIAS=()
-if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
-    MIRROR_HOST="192.168.178.70"
-    SSH_ALIAS=(-o HostKeyAlias=mac2016)
-fi
+SOURCE_ENV="/dev/null"
+SOURCE_COMPOSE="/daten/beelink-runtime/apps/compose.json"
+SOURCE_PROJECT="beelink-apps"
+SOURCE_WEB="beelink-apps-owncloud-app-1"
+SOURCE_DB="beelink-databases-owncloud-1"
+SOURCE_DB_USER="beelink_restore"
+SOURCE_STATUS_URL="https://www.mxtracks.info/owncloud/status.php"
+SOURCE_STATUS_RESOLVE=(--resolve www.mxtracks.info:443:127.0.0.1)
+MIRROR_HOST="192.168.178.70"
+SSH_ALIAS=(-o HostKeyAlias=mac2016)
 MIRROR_USER="hannes"
 MIRROR_REPO="/Users/hannes/git/dockerApache"
 MIRROR_ROOT="/Volumes/SamsungT5_1T/ownCloudBackup/owncloud"
@@ -93,10 +72,7 @@ remote_compose() {
     remote "cd '$MIRROR_REPO' && docker compose --env-file apache/.env -f '$MIRROR_COMPOSE' --profile owncloud $1"
 }
 
-RSYNC_SSH="ssh -i $SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KNOWN_HOSTS"
-if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
-    RSYNC_SSH="$RSYNC_SSH -o HostKeyAlias=mac2016"
-fi
+RSYNC_SSH="ssh -i $SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KNOWN_HOSTS -o HostKeyAlias=mac2016"
 
 sync_data() {
     echo "Syncing ownCloud files to mac2016..."
@@ -166,16 +142,8 @@ sync_code() {
         fi"
 }
 
-source_compose() {
-    docker compose --env-file "$SOURCE_ENV" -f "$SOURCE_COMPOSE" "$@"
-}
-
 source_occ() {
-    if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
-        docker exec --user www-data "$SOURCE_WEB" occ "$@"
-    else
-        source_compose exec -T --user www-data "$SOURCE_SERVICE" php /var/www/owncloud/occ "$@"
-    fi
+    docker exec --user www-data "$SOURCE_WEB" occ "$@"
 }
 
 wait_source_normal() {
@@ -235,16 +203,11 @@ for command_name in docker rsync ssh mountpoint findmnt curl python3; do
 done
 
 [[ -f "$SOURCE_COMPOSE" ]] || die "Source ownCloud Compose file is missing."
-if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
-    [[ "$SOURCE_ENV" == /dev/null && -c "$SOURCE_ENV" && -r "$SOURCE_ENV" ]] ||
-        die "Expected readable empty beelink Compose environment."
-else
-    [[ -f "$SOURCE_ENV" && -r "$SOURCE_ENV" ]] ||
-        die "Source ownCloud environment file is missing or unreadable."
-fi
-[[ -d "$SOURCE_DATA" && -f "$SOURCE_DATA/.ocdata" ]] || die "Latitude Docker ownCloud data is unavailable."
+[[ "$SOURCE_ENV" == /dev/null && -c "$SOURCE_ENV" && -r "$SOURCE_ENV" ]] ||
+    die "Expected readable empty beelink Compose environment."
+[[ -d "$SOURCE_DATA" && -f "$SOURCE_DATA/.ocdata" ]] || die "Beelink ownCloud data is unavailable."
 [[ -d "$SOURCE_APPS" && -d "$SOURCE_CONFIG" && -f "$SOURCE_CONFIG/config.php" ]] ||
-    die "Latitude Docker ownCloud apps or config are unavailable."
+    die "Beelink ownCloud apps or config are unavailable."
 mountpoint -q /daten || die "/daten is not mounted."
 [[ "$(findmnt -rn -M /daten -t ext4 -o FSTYPE)" == "ext4" ]] ||
     die "Expected the internal production data disk to be ext4."
@@ -256,28 +219,18 @@ LOCK_ACQUIRED=1
 mkdir -p "$SOURCE_ROOT/backup"
 chmod 700 "$SOURCE_ROOT/backup"
 
-if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
-    SOURCE_WEB_ID="$(docker inspect -f '{{.Id}}' "$SOURCE_WEB")"
-    SOURCE_DB_ID="$(docker inspect -f '{{.Id}}' "$SOURCE_DB")"
-else
-    SOURCE_WEB_ID="$(source_compose ps -q owncloud)"
-    SOURCE_DB_ID="$(source_compose ps -q db)"
-fi
+SOURCE_WEB_ID="$(docker inspect -f '{{.Id}}' "$SOURCE_WEB")"
+SOURCE_DB_ID="$(docker inspect -f '{{.Id}}' "$SOURCE_DB")"
 [[ -n "$SOURCE_WEB_ID" && "$(docker inspect -f '{{.Name}}' "$SOURCE_WEB_ID" | sed 's#^/##')" == "$SOURCE_WEB" ]] ||
-    die "The expected owncloud-staging web container is not running."
+    die "The expected production ownCloud web container is not running."
 [[ -n "$SOURCE_DB_ID" && "$(docker inspect -f '{{.Name}}' "$SOURCE_DB_ID" | sed 's#^/##')" == "$SOURCE_DB" ]] ||
-    die "The expected owncloud-staging PostgreSQL container is not running."
+    die "The expected production ownCloud PostgreSQL container is not running."
 [[ "$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$SOURCE_WEB_ID")" == "$SOURCE_PROJECT" ]] ||
     die "Production ownCloud is not from the expected Docker Compose project."
 [[ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/mnt/data/files"}}{{.Source}}{{end}}{{end}}' "$SOURCE_WEB_ID")" == "$SOURCE_DATA" ]] ||
     die "Production ownCloud is not using the expected internal data directory."
-if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
-    docker exec "$SOURCE_DB_ID" pg_isready -U "$SOURCE_DB_USER" -d owncloud_stage ||
-        die "Production ownCloud PostgreSQL is not ready."
-else
-    [[ "$(docker inspect -f '{{.State.Health.Status}}' "$SOURCE_DB_ID")" == "healthy" ]] ||
-        die "Production ownCloud PostgreSQL is not healthy."
-fi
+docker exec "$SOURCE_DB_ID" pg_isready -U "$SOURCE_DB_USER" -d owncloud_stage ||
+    die "Production ownCloud PostgreSQL is not ready."
 SOURCE_IMAGE_ID="$(docker inspect -f '{{.Image}}' "$SOURCE_WEB_ID")"
 [[ "$SOURCE_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] ||
     die "Could not determine the immutable production ownCloud image ID."
@@ -291,7 +244,7 @@ python3 -c 'import json,sys; s=json.loads(sys.argv[1]); assert s.get("installed"
 source_occ status || die "Source ownCloud CLI configuration is not ready; mirror unchanged."
 
 [[ -r "$SSH_KEY" && -r "$KNOWN_HOSTS" ]] ||
-    die "Latitude-to-mac2016 SSH key or pinned known_hosts file is unavailable."
+    die "Beelink-to-mac2016 SSH key or pinned known_hosts file is unavailable."
 
 for marker in \
     "$MIRROR_ROOT/.owncloud-mirror-managed" \
@@ -307,11 +260,7 @@ read -r REMOTE_RSYNC_MAJOR REMOTE_RSYNC_MINOR <<< "$REMOTE_RSYNC_VERSION"
 
 echo "Building the isolated ownCloud 11.1.0 mirror runtime on mac2016..."
 remote_compose "config --quiet"
-if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
-    remote_compose "images owncloud"
-else
-    remote_compose "build --pull owncloud"
-fi
+remote_compose "images owncloud"
 remote_compose "config --format json" | python3 -c '
 import json,sys
 s=json.load(sys.stdin)["services"]["owncloud"]

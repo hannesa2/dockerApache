@@ -46,33 +46,28 @@ class OwncloudEnvironmentTest(unittest.TestCase):
                          "TEST_FSTYPE": fstype}, capture_output=True)
                 self.assertEqual(result.returncode, expected)
 
-    def check(self, compose, environment, beelink):
+    def check(self, compose, environment):
         source = SOURCE.read_text()
         start = source.index('[[ -f "$SOURCE_COMPOSE" ]]')
         end = source.index('[[ -d "$SOURCE_DATA"', start)
         return subprocess.run(
             ["bash", "-euc", 'die() { echo "$*" >&2; exit 1; };\n' + source[start:end]],
             env={**os.environ, "SOURCE_COMPOSE": str(compose),
-                 "SOURCE_ENV": str(environment), "BEELINK_PRODUCTION": str(beelink)},
+                 "SOURCE_ENV": str(environment)},
             text=True, capture_output=True)
 
     def test_beelink_accepts_dev_null_but_not_regular_environment(self):
         with tempfile.TemporaryDirectory() as temporary:
             compose = Path(temporary) / "compose.json"
             compose.write_text("{}")
-            self.assertEqual(self.check(compose, "/dev/null", 1).returncode, 0)
-            self.assertNotEqual(self.check(compose, compose, 1).returncode, 0)
+            self.assertEqual(self.check(compose, "/dev/null").returncode, 0)
+            self.assertNotEqual(self.check(compose, compose).returncode, 0)
 
-    def test_latitude_requires_regular_environment(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            compose = Path(temporary) / "compose.yml"
-            compose.write_text("services: {}")
-            environment = Path(temporary) / "production.env"
-            environment.touch()
-            self.assertEqual(self.check(compose, environment, 0).returncode, 0)
-            self.assertNotEqual(self.check(compose, "/dev/null", 0).returncode, 0)
-            self.assertNotEqual(self.check(compose, Path(temporary) / "missing", 0).returncode, 0)
+    def test_missing_compose_fails(self):
+        self.assertNotEqual(self.check("/nonexistent/compose.json", "/dev/null").returncode, 0)
 
-    def test_missing_compose_fails_on_both_hosts(self):
-        for mode in (0, 1):
-            self.assertNotEqual(self.check("/nonexistent/compose.json", "/dev/null", mode).returncode, 0)
+    def test_script_requires_beelink_production(self):
+        source = SOURCE.read_text()
+        self.assertIn('"${BEELINK_PRODUCTION:-0}" == 1 && "$(hostname -s)" == beelink', source)
+        self.assertNotIn("owncloud-staging", source)
+        self.assertNotIn("latitude-compose.yml", source)
