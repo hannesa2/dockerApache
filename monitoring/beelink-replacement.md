@@ -913,6 +913,26 @@ private `/run` directory and compares file hashes and symlink targets before
 recording success. Missing configuration, an unavailable repository, or a
 failed restore is an error; no snapshot is reported as verified.
 
+On beelink, the repository at
+`sftp:beelink-config-mac2016:/Volumes/SamsungT5_1T/beelink-config-restic`
+is on the external mac2016 disk; the first snapshot was restored and checked.
+Keep an independent copy of the Restic password and of the SSH credentials
+needed to access the repository; the Restic password file is not in this backup.
+The mirror is not an off-site backup.
+
+After an initial verified backup, install the weekly timer:
+
+```bash
+sudo python3 ~/git/dockerApache/monitoring/backup-beelink-config.py --install-weekly
+sudo systemctl start beelink-config-backup.service
+sudo systemctl status beelink-config-backup.service beelink-config-backup.timer --no-pager -l
+```
+
+The timer runs Sundays at 02:15 and catches up after downtime. The service
+waits for the shared production lifecycle lock, verifies the restored snapshot,
+and submits a failure email; a failed email submission is visible in the
+failure unit journal. It does not prune snapshots, so monitor available space.
+
 ### Remaining application database snapshots
 
 Run directly and interactively on **Latitude**:

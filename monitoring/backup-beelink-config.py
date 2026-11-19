@@ -25,6 +25,9 @@ RUNTIME = control.RUNTIME
 ENV_FILE = Path("/etc/restic/beelink.env")
 STATE = Path("/var/lib/beelink-config-backup")
 RESTORE_PREFIX = "beelink-config-restore-"
+INSTALLED = Path("/usr/local/libexec/beelink-config-backup")
+UNIT_DIR = Path("/etc/systemd/system")
+NAME = "beelink-config-backup"
 
 
 def parse_environment(text):
@@ -158,8 +161,9 @@ def verify_restored(original, target):
 
 
 def run_restic(environment, *args, **kwargs):
-    return subprocess.run(["restic", *args], env={**os.environ, **environment},
-                          check=True, **kwargs)
+    env = {**os.environ, **environment}
+    env.setdefault("HOME", "/root")
+    return subprocess.run(["restic", *args], env=env, check=True, **kwargs)
 
 
 def backup(environment):
@@ -201,14 +205,108 @@ def backup(environment):
           f"{len(before)} configuration entries verified.", flush=True)
 
 
+def units():
+    return {
+        NAME + ".service": f"""[Unit]
+Description=Back up and verify encrypted beelink configuration
+After=network-online.target docker.service daten.mount
+OnFailure={NAME}-failure.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/bin/flock -w 14400 /run/lock/beelink-staging-control.lock /usr/bin/python3 {INSTALLED}/backup-beelink-config.py --backup-and-verify
+TimeoutStartSec=6h
+""",
+        NAME + "-failure.service": f"""[Unit]
+Description=Notify on beelink configuration backup failure
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {INSTALLED}/backup-beelink-config.py --notify-failure
+""",
+        NAME + ".timer": f"""[Unit]
+Description=Back up beelink configuration weekly
+
+[Timer]
+OnCalendar=Sun *-*-* 02:15:00
+Persistent=true
+Unit={NAME}.service
+
+[Install]
+WantedBy=timers.target
+""",
+    }
+
+
+def install_weekly(environment):
+    validate_repository(environment)
+    report_path = STATE / "latest.json"
+    if report_path.is_symlink() or not report_path.is_file():
+        raise RuntimeError("Run and verify a configuration backup before installing the timer")
+    report = json.loads(report_path.read_text())
+    if not re.fullmatch(r"[a-f0-9]{8,64}", report.get("snapshot", "")) \
+            or not isinstance(report.get("verified_entries"), int) \
+            or report["verified_entries"] < 1:
+        raise RuntimeError("Invalid verified configuration backup report")
+    definitions = units()
+    for name, text in definitions.items():
+        path = UNIT_DIR / name
+        if path.is_symlink() or (path.exists() and path.read_text() != text):
+            raise RuntimeError("Existing configuration backup unit differs: " + name)
+    if INSTALLED.is_symlink():
+        raise RuntimeError("Unsafe configuration backup helper directory")
+    INSTALLED.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if INSTALLED.stat().st_uid != 0 or INSTALLED.stat().st_mode & 0o077:
+        raise RuntimeError("Configuration backup helper directory must be root-private")
+    for name in ("backup-beelink-config.py", "control-beelink-staging.py"):
+        source = Path(__file__).with_name(name)
+        target = INSTALLED / name
+        if target.is_symlink():
+            raise RuntimeError("Unsafe configuration backup helper: " + name)
+        if source.resolve() != target.resolve():
+            shutil.copyfile(source, target)
+        os.chown(target, 0, 0)
+        target.chmod(0o700)
+    for name, text in definitions.items():
+        path = UNIT_DIR / name
+        path.write_text(text)
+        path.chmod(0o644)
+    subprocess.run(["systemd-analyze", "verify", *map(str, (
+        UNIT_DIR / name for name in definitions))], check=True, env={
+            **os.environ, "SYSTEMD_UNIT_PATH":
+            "/etc/systemd/system:/run/systemd/generator.early:"
+            "/run/systemd/generator:/run/systemd/generator.late:"})
+    subprocess.run(["systemctl", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "enable", "--now", NAME + ".timer"], check=True)
+    subprocess.run(["systemctl", "is-active", "--quiet", NAME + ".timer"], check=True)
+    print("Weekly configuration backup timer enabled; first scheduled run not yet verified.",
+          flush=True)
+
+
+def notify_failure():
+    subprocess.run(
+        ["/usr/bin/mail", "-s", "[beelink] FAILED: encrypted configuration backup",
+         "hannes.software@gmx.at"],
+        input="Configuration backup failed. Inspect: journalctl -u "
+              "beelink-config-backup.service --no-pager\n",
+        text=True, check=True, timeout=60)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backup-and-verify", action="store_true", required=True)
+    actions = parser.add_mutually_exclusive_group(required=True)
+    actions.add_argument("--backup-and-verify", action="store_true")
+    actions.add_argument("--install-weekly", action="store_true")
+    actions.add_argument("--notify-failure", action="store_true")
     parser.add_argument("--env-file", type=Path, default=ENV_FILE)
     args = parser.parse_args()
     os.umask(0o077)
     if os.getuid() != 0 or socket.gethostname().split(".")[0].lower() != "beelink":
         raise RuntimeError("Run as root directly on beelink")
+    if args.notify_failure:
+        notify_failure()
+        return
     control.check_mount()
     if RUNTIME.is_symlink() or RUNTIME.stat().st_uid != 0 or RUNTIME.stat().st_mode & 0o077:
         raise RuntimeError("Expected private root-owned runtime")
@@ -216,7 +314,10 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         subprocess.run(["which", "restic"], check=True, stdout=subprocess.DEVNULL)
         environment = read_environment(args.env_file)
-        backup(environment)
+        if args.install_weekly:
+            install_weekly(environment)
+        else:
+            backup(environment)
 
 
 if __name__ == "__main__":
