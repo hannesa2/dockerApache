@@ -804,12 +804,14 @@ GitLab final reconciliation completed successfully on beelink on 2026-11-17
 at 15:08:01 local time, including readiness, encryption-secret validation and
 unchanged protected services. Do not repeat its backup or restore.
 
-### GitLab host shell runner
+### GitLab Docker runner
 
-The earlier shell-runner approach below is superseded by a separately registered
-Docker executor on beelink. It does not reuse the Latitude registration. In
-GitLab, create an instance runner restricted to the `beelink-docker` tag, with
-untagged jobs disabled. Enter its authentication token in the private
+The separately registered Docker executor on beelink does not reuse the
+Latitude registration. It is an instance runner restricted to the
+`beelink-docker` tag, with untagged jobs disabled. Its authentication token
+is stored privately under `/etc/beelink-docker-runner/`.
+
+To install a new registration, enter its authentication token in the private
 `/etc/beelink-docker-runner/token` file, then run:
 
 ```bash
@@ -823,26 +825,9 @@ and jobs requiring special devices need separate setup. The runner is tied to
 the production unit and encrypted T7. After an explicit production stop and
 start, start `beelink-docker-runner.service` again, just as for the web sockets.
 The runner's private configuration under `/etc` is covered by the encrypted
-configuration backup. A real tagged pipeline must be run to verify job execution.
+configuration backup. A tagged pipeline on `cross/MXServer` completed
+successfully on the new runner on 2026-11-19.
 
-The previous alternative was:
-
-The existing Latitude runner registration is preserved from the private seed;
-only its executor changes to `shell`. After the Latitude application fence is
-in place, install the GitLab Runner package on beelink and prepare its
-root-protected configuration:
-
-```bash
-sudo python3 ~/git/dockerApache/monitoring/prepare-beelink-gitlab-runner.py --prepare
-sudo python3 ~/git/dockerApache/monitoring/prepare-beelink-gitlab-runner.py --activate
-```
-
-Activation installs a systemd override so jobs run as the unprivileged
-`gitlab-runner` account, verifies the registration, and enables the service.
-The runner token is never printed or stored in Git. Shell executors run CI
-scripts directly on the host: keep this runner restricted to trusted projects,
-and do not add the Docker socket or privileged access. Do not activate it while
-the Latitude runner with the same registration can still start.
 GitLab SSH is bound to beelink's LAN IPv4 at TCP 40022; this Compose binding
 does not add a router/WAN forward.
 The production preparation uses implicit TLS for SMTP port 465. Existing
