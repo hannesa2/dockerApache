@@ -6,7 +6,8 @@
     <string>com.mxtracks.github-artifacts-sync</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/hannes/git/dockerApache/github-artifacts/sync-latitude.sh</string>
+        <string>/usr/bin/python3</string>
+        <string>/Users/hannes/bin/sync-beelink-artifacts.py</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
