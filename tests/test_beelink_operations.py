@@ -43,7 +43,7 @@ class BeelinkOperationsTest(unittest.TestCase):
 
     def test_wrong_host_does_not_change_boot_configuration(self):
         with patch.object(OPS.os, "getuid", return_value=0), \
-                patch.object(OPS.socket, "gethostname", return_value="latitude"), \
+                patch.object(OPS.socket, "gethostname", return_value="other-host"), \
                 patch("sys.argv", ["operations", "--prepare-and-check"]), \
                 patch.object(OPS, "prepare") as prepare:
             with self.assertRaisesRegex(RuntimeError, "directly on beelink"):

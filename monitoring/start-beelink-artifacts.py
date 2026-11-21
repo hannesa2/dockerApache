@@ -27,7 +27,7 @@ import yaml
 
 config = yaml.safe_load(Path('/source/parameter.yml').read_text())
 if config['file']['directory'] != '/daten/githubArtifactsPy' or config['server']['sub_url'] != '/github':
-    raise RuntimeError('Expected original Latitude artifact configuration')
+    raise RuntimeError('Expected existing GitHub artifact configuration')
 for key in ('username', 'password'):
     if not isinstance(config['authentication'][key], str) or not config['authentication'][key]:
         raise RuntimeError('Missing original artifact credentials')

@@ -270,9 +270,9 @@ def execute(job):
     if job == "postgresql":
         run("bash", str(ROOT / "postgresql-backup.sh"), env=environment())
     elif job == "owncloud":
-        run("bash", str(ROOT / "owncloud/sync-latitude.sh"), env=environment())
+        run("bash", str(ROOT / "owncloud/sync-beelink.sh"), env=environment())
     elif job == "mxserver":
-        run("bash", str(ROOT / "mxserver/sync-latitude.sh"), env=environment())
+        run("bash", str(ROOT / "mxserver/sync-beelink.sh"), env=environment())
     elif job == "matomo":
         run("python3", str(ROOT / "sync-matomo.py"), "--apply", env=environment())
     elif job == "gitlab":
@@ -371,8 +371,8 @@ def install():
             (ROOT / "beelink-jobs.py", INSTALLED / "beelink-jobs.py"),
             (ROOT / "postgresql-backup.sh", INSTALLED / "postgresql-backup.sh"),
             (ROOT / "sync-matomo.py", INSTALLED / "sync-matomo.py"),
-            (ROOT.parent / "owncloud/sync-latitude.sh", INSTALLED / "owncloud/sync-latitude.sh"),
-            (ROOT.parent / "mxserver/sync-latitude.sh", INSTALLED / "mxserver/sync-latitude.sh")):
+            (ROOT.parent / "owncloud/sync-beelink.sh", INSTALLED / "owncloud/sync-beelink.sh"),
+            (ROOT.parent / "mxserver/sync-beelink.sh", INSTALLED / "mxserver/sync-beelink.sh")):
         target.parent.mkdir(mode=0o700, exist_ok=True)
         shutil.copyfile(source, target)
         target.chmod(0o700)

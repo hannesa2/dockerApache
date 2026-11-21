@@ -192,9 +192,12 @@ remote_output="$(
         "$PRIMARY_HOST" /bin/bash -s <<'REMOTE'
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 printf 'HOST|%s\n' "$(hostname)"
-if [[ "$(hostname -s)" == beelink ]]; then
-    set -o pipefail
-    python3 /usr/local/bin/beelink-job-status --health-json | python3 -c '
+if [[ "$(hostname -s)" != beelink ]]; then
+    printf 'CHECK|FAIL|Primary host identity|expected beelink; got %s\n' "$(hostname -s)"
+    exit 0
+fi
+set -o pipefail
+python3 /usr/local/bin/beelink-job-status --health-json | python3 -c '
 import json,sys
 report=json.load(sys.stdin)
 failures=report["failures"]
@@ -203,85 +206,6 @@ for failure in failures:
 if not failures:
     print("CHECK|OK|beelink health|containers, TLS, mount and job freshness checked")
 '
-    exit "$?"
-fi
-
-check_unit() {
-    local unit="$1"
-    local state
-    if systemctl is-active --quiet "$unit"; then
-        printf 'CHECK|OK|Latitude systemd %s|active\n' "$unit"
-    else
-        state="$(systemctl is-active "$unit" 2>/dev/null || true)"
-        printf 'CHECK|FAIL|Latitude systemd %s|%s\n' "$unit" "${state:-inactive}"
-    fi
-}
-
-check_container() {
-    local name="$1"
-    local status state health
-    if ! status="$(docker inspect --format '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$name" 2>/dev/null)"; then
-        printf 'CHECK|FAIL|Latitude container %s|missing or Docker unavailable\n' "$name"
-        return
-    fi
-    IFS='|' read -r state health <<< "$status"
-    if [[ "$state" == running && ( "$health" == healthy || "$health" == none ) ]]; then
-        if [[ "$health" == none ]]; then
-            printf 'CHECK|OK|Latitude container %s|running\n' "$name"
-        else
-            printf 'CHECK|OK|Latitude container %s|running (healthy)\n' "$name"
-        fi
-    else
-        printf 'CHECK|FAIL|Latitude container %s|state=%s health=%s\n' "$name" "$state" "$health"
-    fi
-}
-
-check_http() {
-    local name="$1"
-    local url="$2"
-    local code
-    local max_time="${3:-8}"
-    code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-        --connect-timeout 3 --max-time "$max_time" "$url" 2>/dev/null)" || code="000"
-    case "$code" in
-        2[0-9][0-9]|3[0-9][0-9]|401|403)
-            printf 'CHECK|OK|%s|HTTP %s\n' "$name" "$code"
-            ;;
-        *)
-            printf 'CHECK|FAIL|%s|HTTP %s\n' "$name" "$code"
-            ;;
-    esac
-}
-
-for unit in apache2 glassfish docker; do
-    check_unit "$unit"
-done
-if [[ -f /etc/mxserver-postgres-dockerized ]]; then
-    check_container mxserver-postgres-db-1
-else
-    check_unit postgresql@16-main
-fi
-
-for name in \
-    apache-apache-1 apache-db-1 gitlab gitlab-runner \
-    nextcloud-coredns-dot-1 nextcloud-dnsmasq-1 \
-    owncloud-staging-owncloud-1 owncloud-staging-db-1; do
-    check_container "$name"
-done
-
-check_http "Latitude native Apache" "http://127.0.0.1/"
-check_http "Latitude GlassFish" "http://127.0.0.1:8081/"
-check_http "Latitude Apache container" "http://127.0.0.1:8085/"
-check_http "Latitude GitLab" "http://127.0.0.1:8083/users/sign_in" 30
-
-owncloud_status="$(curl --silent --fail --connect-timeout 3 --max-time 8 \
-    "http://127.0.0.1:8093/status.php" 2>/dev/null)" || owncloud_status=""
-if [[ -n "$owncloud_status" ]] && printf '%s' "$owncloud_status" | \
-    python3 -c 'import json,sys; s=json.load(sys.stdin); sys.exit(0 if s.get("installed") and s.get("version","").startswith("11.1.0") and not s.get("maintenance") else 1)' 2>/dev/null; then
-    printf 'CHECK|OK|Latitude ownCloud application|11.1.0 installed and out of maintenance\n'
-else
-    printf 'CHECK|FAIL|Latitude ownCloud application|not installed, not 11.1.0, in maintenance, or unreachable on port 8093\n'
-fi
 REMOTE
 )" || {
     record FAIL "Primary SSH" "host is unreachable over SSH ($PRIMARY_HOST)"

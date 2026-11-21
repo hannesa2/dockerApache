@@ -213,7 +213,7 @@ class BeelinkFrontendTest(unittest.TestCase):
         self.assertNotIn("Redirect 503", ha)
         self.assertIn(FRONT.blocked("/github"), text)
         with self.assertRaises(ValueError):
-            FRONT.vhosts("latitude")
+            FRONT.vhosts("other-host")
 
     def test_ha_config_is_unchanged_unless_explicit_restart_flag_given(self):
         with tempfile.TemporaryDirectory() as temporary:

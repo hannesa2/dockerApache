@@ -7,7 +7,7 @@
 #   /srv/www/vhosts/dev.mxtracks  →  devcopy.mxtracks.info
 #   /srv/www/vhosts/mxdocs        →  wwwcopy.mxtracks.info
 #
-# Run DIRECTLY on latitude (interactive SSH or local terminal – sudo required).
+# Run directly on the server with the native stack (interactive session – sudo required).
 #
 # Usage:
 #   cd ~/git/dockerApache/apache
@@ -299,4 +299,3 @@ for site_def in "${SITES[@]}"; do
   log "     curl -Lv http://${NEW_DOMAIN}/"
 done
 log ""
-

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mirror native Latitude Matomo without changing the production installation."""
+"""Mirror production Matomo without changing the production installation."""
 import configparser
 import fcntl
 import hashlib
@@ -12,7 +12,8 @@ import sys
 import tempfile
 import datetime as dt
 
-SOURCE = Path(os.environ.get("MATOMO_SOURCE_DIR", "/srv/www/vhosts/mxdocs/piwik"))
+SOURCE = Path(os.environ.get(
+    "MATOMO_SOURCE_DIR", "/daten/beelink-runtime/matomo/www/piwik"))
 TARGET = os.environ.get("MATOMO_MIRROR_DIR", "/Users/hannes/server/apache/www/mxdocs/piwik")
 STATE = Path.home() / ".local/state/matomo-mirror"
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
@@ -69,7 +70,7 @@ def synchronize(apply):
     updated = updated.replace("[General]", '[General]\ntrusted_hosts[] = "www16.mxtracks.info"\n'
                               'trusted_hosts[] = "www16.mxtracks.info:8443"\n'
                               'trusted_hosts[] = "www16.mxtracks.info:9443"', 1)
-    print(f"Native Matomo {version}; mirror target matomo_mirror on mac2016", flush=True)
+    print(f"Production Matomo {version}; mirror target matomo_mirror on mac2016", flush=True)
     if not apply:
         print("Preflight passed; no database or files changed")
         return

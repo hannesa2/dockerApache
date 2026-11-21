@@ -52,7 +52,7 @@ def prepare():
                 "'@basic_auth_required\\ndef get():' in s")
     source = control.RUNTIME / "host-configuration/srv/gitlab/config/gitlab.rb"
     if source.is_symlink() or not source.is_file():
-        raise RuntimeError("Missing original Latitude GitLab configuration")
+        raise RuntimeError("Missing source GitLab configuration")
     apps.gitlab_config(source.read_text())
     paths = [
         control.RUNTIME / "apps/compose.json",

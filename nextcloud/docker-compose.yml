@@ -7,7 +7,7 @@
 #   If mobile clients on the same LAN get Fritz!Box's error page instead of
 #   Nextcloud, enable the dnsmasq service:
 #     DNSMASQ_ENABLED=true   (in .env)
-#   Then point Fritz!Box or mobile DNS to latitude's LAN IP.
+#   Then point Fritz!Box or mobile DNS to beelink's LAN IP.
 #   dnsmasq answers nextcloud.<your-domain> → NEXTCLOUD_LOCAL_IP and
 #   forwards all other queries upstream (Fritz!Box / 192.168.178.1).
 
@@ -88,7 +88,7 @@ services:
   # Requires:
   #   - split-dns profile active (dnsmasq must be running on port 53)
   #   - DOT_CERT_DIR in .env pointing to the Let's Encrypt live directory
-  #   - Fritz!Box port-forward:  853 TCP → 192.168.178.129:853
+  #   - Fritz!Box port-forward:  853 TCP → 192.168.178.142:853
   #
   # Start both together:
   #   docker compose --profile split-dns --profile dot up -d
@@ -101,7 +101,7 @@ services:
     ports:
       - "853:853/tcp"
     environment:
-      NEXTCLOUD_LOCAL_IP: ${NEXTCLOUD_LOCAL_IP:-192.168.178.129}
+      NEXTCLOUD_LOCAL_IP: ${NEXTCLOUD_LOCAL_IP:-192.168.178.142}
       DOT_CERT_DIR: ${DOT_CERT_DIR:-/etc/letsencrypt/live/nextcloud.mxtracks.info-0002}
     volumes:
       - /etc/letsencrypt:/etc/letsencrypt:ro
@@ -113,7 +113,7 @@ services:
       - nextcloud_net
 
   # ── Optional: split-DNS for NAT-loopback workaround ──────────────────────
-  # Clients that use latitude as their DNS server will resolve
+  # Clients that use beelink as their DNS server will resolve
   # OVERWRITEHOST → NEXTCLOUD_LOCAL_IP directly, bypassing Fritz!Box NAT.
   # Uses host networking so dnsmasq binds the LAN interface directly
   # (avoids Docker UDP proxy issues).
@@ -135,7 +135,7 @@ services:
       # Example:  EXTRA_LOCAL_DOMAINS=www.mxtracks.info dev.mxtracks.info
       EXTRA_LOCAL_DOMAINS: ${EXTRA_LOCAL_DOMAINS:-}
       # Mirror domains (e.g. www16/dev16.mxtracks.info) resolve to a DIFFERENT
-      # host (the mac2016 mirror, not latitude) – needed because Fritz!Box has
+      # host (the mac2016 mirror, not beelink) – needed because Fritz!Box has
       # no NAT loopback, so LAN clients can't reach the mirror via its public
       # DNS name/port-forward while at home.
       # Example:  MIRROR_LOCAL_IP=192.168.178.70
@@ -177,7 +177,7 @@ services:
             fi
           done
 
-          # ── Mirror domains (resolve to mac2016, not latitude) ───────────
+          # ── Mirror domains (resolve to mac2016, not beelink) ─────────────
           if [ -n "$$MIRROR_LOCAL_IP" ]; then
             for d in $$MIRROR_EXTRA_DOMAINS; do
               echo "address=/$$d/$$MIRROR_LOCAL_IP"
@@ -185,7 +185,7 @@ services:
             done
           fi
 
-          # ── IPv6 ULA overrides (when latitude has a stable private IPv6) ─
+          # ── IPv6 ULA overrides (when beelink has a stable private IPv6) ──
           if [ -n "$$NEXTCLOUD_LOCAL_IPV6" ]; then
             echo "listen-address=$$NEXTCLOUD_LOCAL_IPV6"
             echo "address=/$$OVERWRITEHOST/$$NEXTCLOUD_LOCAL_IPV6"

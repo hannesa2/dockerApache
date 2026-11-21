@@ -22,7 +22,7 @@ for command in mail curl docker ssh python3 crontab; do
 done
 
 if [[ ! -r "$HOME/.ssh/id_rsa" || ! -r "$HOME/.ssh/known_hosts" ]]; then
-    echo "ERROR: mac2016-to-Latitude SSH key or known_hosts is unavailable." >&2
+    echo "ERROR: mac2016-to-beelink SSH key or known_hosts is unavailable." >&2
     exit 1
 fi
 
@@ -44,7 +44,7 @@ grep -vF "$CRON_MARKER" "$current_crontab" |
 } | crontab -
 
 echo "Installed the hourly mac2016-hosted availability monitor at minute 10."
-echo "It checks mac2016, Latitude and beelink Home Assistant, emailing only on failures or recovery."
+echo "It checks mac2016 and beelink, emailing only on failures or recovery."
 echo "The user crontab runs independently of an interactive login."
 echo "Logs and notification state are stored under $STATE_DIR."
 echo "Running the initial check now."

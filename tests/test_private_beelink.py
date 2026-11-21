@@ -34,7 +34,7 @@ class PrivateBeelinkTest(unittest.TestCase):
             with patch.object(Path, "resolve", side_effect=PermissionError):
                 self.assertEqual(PRIVATE.canonical(PRIVATE.BEELINK_MATOMO),
                                  PRIVATE.BEELINK_MATOMO)
-        with patch.object(PRIVATE, "short_hostname", return_value="latitude"):
+        with patch.object(PRIVATE, "short_hostname", return_value="other-host"):
             self.assertFalse(PRIVATE.privileged_matomo(PRIVATE.BEELINK_MATOMO))
 
     def test_privileged_digest_reads_stream_without_printing_plaintext(self):

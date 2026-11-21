@@ -72,4 +72,4 @@ docker compose -f "$APACHE_DIR/docker-compose.yml" --profile mxserver build mxse
 docker compose -f "$APACHE_DIR/docker-compose.yml" --profile mxserver up -d mxserver-db mxserver-mail
 
 echo "MXServer mirror storage and runtime are prepared."
-echo "Run sudo ./mxserver/install-latitude-sync.sh on latitude to copy the database and pictures."
+echo "The beelink-job-mxserver timer on beelink synchronizes the production database and pictures."

@@ -4,45 +4,26 @@ export LC_ALL=C
 export LANG=C
 
 if [[ "$(id -u)" -ne 0 ]]; then
-    echo "ERROR: Run this mirror sync as root on latitude." >&2
+    echo "ERROR: Run this mirror sync as root on beelink." >&2
     exit 1
 fi
 
-SOURCE_KIND="native"
-if [[ -f /etc/mxserver-postgres-dockerized ]]; then
-    SOURCE_KIND="docker"
-fi
-case "${1:-}" in
-    "") ;;
-    --source=docker) SOURCE_KIND="docker"; shift ;;
-    --source=native) SOURCE_KIND="native"; shift ;;
-    *) echo "Usage: $0 [--source=native|--source=docker]" >&2; exit 2 ;;
-esac
-[[ $# -eq 0 ]] || { echo "ERROR: Unexpected arguments." >&2; exit 2; }
+[[ $# -eq 0 ]] || { echo "ERROR: This sync accepts no arguments." >&2; exit 2; }
+[[ "$(id -u)" -eq 0 && "${BEELINK_PRODUCTION:-0}" == 1 &&
+    "$(hostname -s)" == beelink ]] ||
+    { echo "ERROR: Run this job as root in beelink production mode." >&2; exit 1; }
+[[ "$(findmnt -rn -M /daten -t ext4 -o UUID)" == c0c42461-ae4c-4edb-a993-bba94a05ed6c ]] ||
+    { echo "ERROR: Expected encrypted T7." >&2; exit 1; }
 
 SOURCE_DATABASE="MXServer"
-SOURCE_CONTAINER="mxserver-postgres-db-1"
+SOURCE_CONTAINER="beelink-databases-mxserver-1"
 STAGING_DATABASE="MXServer_staging"
 PREVIOUS_DATABASE="MXServer_previous"
-SOURCE_PICTURES="/srv/postgres/data/mxinfo"
-SOURCE_KEYFILE="/opt/glassfish-4.0/glassfish/domains/domain1/config/keyfile"
-SOURCE_DB_USER="postgres"
-if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
-    [[ "$(hostname -s)" == beelink ]] || { echo "ERROR: Expected beelink." >&2; exit 1; }
-    [[ "$(findmnt -rn -M /daten -t ext4 -o UUID)" == c0c42461-ae4c-4edb-a993-bba94a05ed6c ]] ||
-        { echo "ERROR: Expected encrypted T7." >&2; exit 1; }
-    SOURCE_KIND="docker"
-    SOURCE_CONTAINER="beelink-databases-mxserver-1"
-    SOURCE_DB_USER="beelink_restore"
-    SOURCE_PICTURES="/daten/beelink-runtime/rootfs/srv/postgres/data/mxinfo"
-    SOURCE_KEYFILE="/daten/beelink-runtime/java-web/glassfish/glassfish/domains/domain1/config/keyfile"
-fi
-MIRROR_HOST="mac2016"
-SSH_ALIAS=()
-if [[ "${BEELINK_PRODUCTION:-0}" == 1 ]]; then
-    MIRROR_HOST="192.168.178.70"
-    SSH_ALIAS=(-o HostKeyAlias=mac2016)
-fi
+SOURCE_PICTURES="/daten/beelink-runtime/rootfs/srv/postgres/data/mxinfo"
+SOURCE_KEYFILE="/daten/beelink-runtime/java-web/glassfish/glassfish/domains/domain1/config/keyfile"
+SOURCE_DB_USER="beelink_restore"
+MIRROR_HOST="192.168.178.70"
+SSH_ALIAS=(-o HostKeyAlias=mac2016)
 MIRROR_USER="hannes"
 MIRROR_ROOT="/Volumes/SamsungT5_1T/MXServerMirror"
 MIRROR_PICTURES="$MIRROR_ROOT/pictures"
@@ -112,16 +93,11 @@ trap cleanup EXIT
 
 [[ -d "$SOURCE_PICTURES" ]] || die "Source picture directory is unavailable: $SOURCE_PICTURES"
 [[ -r "$SOURCE_KEYFILE" ]] || die "GlassFish file-realm keyfile is unavailable: $SOURCE_KEYFILE"
-[[ -r "$SSH_KEY" && -r "$KNOWN_HOSTS" ]] || die "Latitude-to-mac2016 SSH key or known_hosts is unavailable."
-command -v rsync >/dev/null || die "rsync is unavailable on latitude."
-if [[ "$SOURCE_KIND" == native ]]; then
-    command -v pg_dump >/dev/null || die "pg_dump is unavailable."
-    command -v runuser >/dev/null || die "runuser is unavailable."
-else
-    command -v docker >/dev/null || die "docker is unavailable."
-    [[ "$(docker inspect -f '{{.State.Running}}' "$SOURCE_CONTAINER")" == true ]] ||
-        die "Source PostgreSQL container is not running: $SOURCE_CONTAINER"
-fi
+[[ -r "$SSH_KEY" && -r "$KNOWN_HOSTS" ]] || die "Beelink-to-mac2016 SSH key or known_hosts is unavailable."
+command -v rsync >/dev/null || die "rsync is unavailable on beelink."
+command -v docker >/dev/null || die "docker is unavailable."
+[[ "$(docker inspect -f '{{.State.Running}}' "$SOURCE_CONTAINER")" == true ]] ||
+    die "Source PostgreSQL container is not running: $SOURCE_CONTAINER"
 
 remote "test -f '$MIRROR_ROOT/.mxserver-mirror-managed' &&
         test -f '$MIRROR_PICTURES/.mxserver-mirror-managed' &&
@@ -161,11 +137,7 @@ remote "docker compose -f '$MIRROR_COMPOSE_FILE' --profile mxserver exec -T mxse
     -c 'CREATE DATABASE \"MXServer_staging\" OWNER \"mxserver\"'"
 
 echo "Streaming the MXServer PostgreSQL snapshot to mac2016..."
-if [[ "$SOURCE_KIND" == native ]]; then
-    source_dump=(runuser -u postgres -- pg_dump)
-else
-    source_dump=(docker exec --user postgres "$SOURCE_CONTAINER" pg_dump -U "$SOURCE_DB_USER")
-fi
+source_dump=(docker exec --user postgres "$SOURCE_CONTAINER" pg_dump -U "$SOURCE_DB_USER")
 "${source_dump[@]}" --format=plain --no-owner --no-privileges --dbname="$SOURCE_DATABASE" |
     ssh "${ssh_options[@]}" "$MIRROR_USER@$MIRROR_HOST" \
         "export PATH='/Applications/OrbStack.app/Contents/MacOS/xbin:/usr/local/bin:/usr/bin:/bin'; \

@@ -85,13 +85,12 @@ dockerApache/
 - Files: `tar -czf` for config; `rsync --delete` for large data trees.
 - Mirror sync (`sync-to-mirror.sh`): streams directly source → mirror via SSH pipes, no temp files.
 
-### Availability monitoring (latitude and mac2016)
-- `monitoring/systems-health-check.sh` runs on latitude hourly at minute 0. It checks services, Docker containers, and HTTP endpoints on both hosts; SSH connects from latitude to mac2016.
-- `monitoring/systems-health-check-mac.sh` runs on mac2016 hourly at minute 10. It checks mac2016 locally and latitude over SSH, so it can report a latitude outage even when latitude is offline.
-- Both monitors email `hannes.software@gmx.at` on initial status, new failures, and recovery; unchanged failures are logged without repeat email. Their state and logs are separate under `~/.local/state/systems-health-monitor/`.
-- Install or refresh each user crontab entry by running the matching script as `hannes` on that host: `monitoring/install-latitude-monitor.sh` on latitude and `monitoring/install-mac2016-monitor.sh` on mac2016. Neither installer requires sudo.
-- The mac2016 crontab explicitly sets `HOME` and `PATH` for non-interactive cron, including `/usr/local/bin` for Docker/Python tools. Preserve this environment when changing its cron entry.
-- The mac2016 monitor only provides outage alerts while mac2016 itself is powered on, network-connected, and able to send email. The latitude monitor cannot report while latitude is down; it can only observe and report its recovery after it returns.
+### Availability monitoring (beelink and mac2016)
+- `monitoring/beelink-jobs.py` installs beelink's guarded backup, mirror and hourly health systemd jobs.
+- `monitoring/systems-health-check-mac.sh` runs on mac2016 hourly at minute 10. It checks mac2016 locally and queries beelink over SSH.
+- Both monitors email on initial status, new failures and recovery; unchanged failures do not generate repeat email.
+- Refresh the mac2016 user crontab by running `monitoring/install-mac2016-monitor.sh` as `hannes` on mac2016. Preserve its explicit `HOME` and `PATH`.
+- The mac2016 monitor only sends alerts while mac2016 is powered on, network-connected and able to send email.
 
 ### CI/CD (GitHub Actions)
 - Nextcloud workflow: `.github/workflows/nextcloud.yml`
@@ -159,17 +158,17 @@ hits Fritz!Box's own HTTPS interface → Fritz!Box returns its error page.
 
 ```
 ┌─ home WiFi ─────────────────────────────────────────────┐
-│  mobile → DNS query direct to dnsmasq (192.168.178.129) │
-│         ← 192.168.178.129  ✓  (A + AAAA overridden)    │
-│  mobile → HTTPS 192.168.178.129:443 (reverse proxy)     │
+│  mobile → DNS query direct to dnsmasq (192.168.178.142) │
+│         ← 192.168.178.142  ✓  (A + AAAA overridden)    │
+│  mobile → HTTPS 192.168.178.142:443 (reverse proxy)     │
 │         ← Nextcloud  ✓                                  │
 └─────────────────────────────────────────────────────────┘
 ```
 
 1. In `.env`:
    ```dotenv
-   NEXTCLOUD_LOCAL_IP=192.168.178.129          # latitude LAN IPv4
-   NEXTCLOUD_LOCAL_IPV6=fdf4:be15:98e0:...     # latitude stable ULA IPv6
+   NEXTCLOUD_LOCAL_IP=192.168.178.142          # beelink LAN IPv4
+   NEXTCLOUD_LOCAL_IPV6=                     # optional; set beelink's stable ULA IPv6
    DNS_UPSTREAM=8.8.8.8                        # upstream for all other queries
    ```
 2. Start dnsmasq: `docker compose --profile split-dns up -d`
@@ -184,13 +183,13 @@ hits Fritz!Box's own HTTPS interface → Fritz!Box returns its error page.
 `nextcloud.mxtracks.info` is a CNAME to `*.myfritz.net` (Fritz!Box's own
 MyFRITZ DDNS domain). Fritz!Box resolves `*.myfritz.net` **internally** —
 it never forwards those queries to the configured upstream DNS. Even with
-*Bevorzugter DNSv4-Server* = `192.168.178.129`, Fritz!Box "sees through" the
+*Bevorzugter DNSv4-Server* = `192.168.178.142`, Fritz!Box "sees through" the
 CNAME and returns its public IP directly.
 
 **The only reliable fix is per-device DNS on Android:**
 
 > WiFi settings → long-press network → Modify → Advanced →
-> IP settings: **Static** → **DNS 1**: `192.168.178.129`, **DNS 2**: `8.8.8.8`
+> IP settings: **Static** → **DNS 1**: `192.168.178.142`, **DNS 2**: `8.8.8.8`
 
 This bypasses Fritz!Box's resolver entirely and talks straight to dnsmasq.
 
@@ -199,184 +198,21 @@ and forwards all other queries to `DNS_UPSTREAM`, so normal internet DNS is unaf
 
 ---
 
-## Mirror sync (`sync-to-mirror.sh`)
+## Production operations
 
-### Topology
-| Role | Host | OS | Data path |
-|------|------|----|-----------|
-| **Source** (production) | `latitude` | Ubuntu Linux | `NEXTCLOUD_DATA_DIR=/media/hannes/T5` |
-| **Mirror** (standby) | `mac2016` | macOS | `MIRROR_DATA_DIR=/Volumes/SamsungT1` |
+Production runs on beelink; mac2016 is the standby mirror. Use
+`monitoring/beelink-jobs.py` for job definitions, status and installation.
+The systemd jobs verify the encrypted data mount, serialize operations and
+report failures. Mirror syncs overwrite mirror-only changes.
 
-The script is **always run on the source server** (`latitude`).  
-It SSHes into the mirror (`mac2016`) to run Docker Compose commands there.
+The `nextcloud/` Compose stack is retained as a standalone stack; it is not the
+active production deployment. If intentionally deploying it, configure the
+LAN address and stable ULA of the host running its reverse proxy rather than
+reusing another machine's addresses.
 
-### What it does (in order)
-1. Enable maintenance mode on source
-2. Enable maintenance mode on mirror (suppress errors if not yet set up)
-3. Stream PostgreSQL dump source → mirror via SSH pipe (`pg_dump | ssh | psql`)
-4. Stream `config/` + `custom_apps/` via tar pipe; patch `config.php` on mirror
-   (strips `overwritehost`/`overwriteprotocol`, updates DB credentials)
-5. Rsync `data/` incrementally source → mirror (`sudo rsync` — data owned by `www-data`)
-6. `docker compose down && docker compose up -d` on mirror so the entrypoint
-   re-populates `html/`; wait up to 20 min for `versioncheck.php` to appear
-7. `occ upgrade` + `occ maintenance:repair` on mirror
-8. Set `trusted_domains` on mirror to `localhost` + `$MIRROR_HOST`
-9. Disable maintenance mode on mirror, then on source
-
-### Key `.env` variables for sync
-```dotenv
-MIRROR_HOST=mac2016               # SSH hostname of the mirror
-MIRROR_USER=hannes                # SSH user on the mirror
-MIRROR_SSH_PORT=22
-MIRROR_NEXTCLOUD_DIR=/Users/hannes/git/dockerApache/nextcloud  # compose dir on mirror
-MIRROR_DATA_DIR=/Volumes/SamsungT1  # data root on mirror (if different from compose dir)
-MIRROR_EXTRA_PATH=/usr/local/bin    # prepended to PATH on mirror (Docker Desktop on macOS)
-MIRROR_SHELL=zsh                    # login shell on mirror (zsh for macOS, bash for Linux)
-```
-
-### Running the sync
+Availability checks and job status:
 ```bash
-# On the source server (must be an interactive/sudo-capable session):
-cd ~/git/dockerApache/nextcloud
-./sync-to-mirror.sh
-
-# Or via cron (credentials must be cached or passwordless sudo configured):
-0 3 * * * /home/hannes/git/dockerApache/nextcloud/sync-to-mirror.sh >> /var/log/nc-mirror-$(date +\%Y\%m\%d).log 2>&1
-```
-
-> **Important:** `sync-to-mirror.sh` uses `sudo rsync` to read the `www-data`-owned
-> data directory. It must be run in a session where `sudo` can authenticate
-> (interactive login with cached credentials). Running it via a non-interactive
-> `ssh latitude './sync-to-mirror.sh'` will fail with
-> *"sudo: a terminal is required to read the password"*.
-
----
-
-## ownCloud migration
-`nextcloud/migrate-from-owncloud.sh` handles:
-1. User discovery via `occ user:list` (or filesystem scan fallback).
-2. File rsync with `--delete` (exact mirror of ownCloud source).
-3. `convmv` pass to fix ISO-8859-1 → UTF-8 filenames.
-4. Contact export via ownCloud CardDAV HTTP endpoint.
-5. Contact import into Nextcloud via CardDAV PUT.
-6. `files:scan` per user.
-
-Configure via `.env`:
-```dotenv
-OWNCLOUD_DATA_DIR=/path/to/owncloud/data
-OWNCLOUD_OCC=/path/to/owncloud/occ
-OWNCLOUD_URL=http://localhost/owncloud
-OWNCLOUD_ADMIN_USER=admin
-OWNCLOUD_ADMIN_PASSWORD=secret
-```
-
----
-
-## Apache stack – native-to-Docker migration
-
-`apache/migrate-native-to-docker.sh` handles a one-shot migration of existing
-native Apache + MySQL websites into the Docker Apache stack.
-
-### Sites migrated (latitude server)
-
-| Native docroot | Docker www subdir | New (copy) domain |
-|----------------|-------------------|-------------------|
-| `/srv/www/vhosts/dev.mxtracks` | `dev.mxtracks` | `devcopy.mxtracks.info` |
-| `/srv/www/vhosts/mxdocs` | `mxdocs` | `wwwcopy.mxtracks.info` |
-
-Native and Docker stacks run **side-by-side** during the transition period:
-- Native Apache remains on ports 80/443, serving the original domains.
-- Docker container runs on ports 8081/8444; native Apache proxies the *copy* domains to it.
-
-### What the script does
-1. `docker compose up -d --build` – starts the stack (safe to re-run).
-2. `sudo rsync` each web root into `$APACHE_DATA_DIR/www/<subdir>/`.
-3. `convmv` pass to fix any ISO-8859-1 filenames.
-4. `mysqldump` each database via the native MySQL WordPress user.
-5. Creates DB + user in Docker MySQL (`CREATE DATABASE IF NOT EXISTS …`).
-6. Imports the dump via the Docker MySQL root user.
-7. Patches `wp-config.php`: `DB_HOST localhost` → `db` (Docker service name).
-8. Writes a Docker vhost config into `$APACHE_DATA_DIR/vhosts/<domain>.conf`.
-9. Writes a native-Apache reverse-proxy snippet (`native-proxy-<domain>.conf`).
-10. `apache2ctl graceful` inside the container to pick up new vhosts.
-
-### Running the migration
-```bash
-# On latitude (interactive session – sudo required):
-cd ~/git/dockerApache/apache
-cp .env.example .env   # set MYSQL_ROOT_PASSWORD to a strong password
-./migrate-native-to-docker.sh
-```
-
-### Post-migration steps (printed by the script)
-```bash
-sudo a2enmod proxy proxy_http
-sudo cp native-proxy-devcopy.mxtracks.info.conf /etc/apache2/sites-available/
-sudo a2ensite devcopy.mxtracks.info.conf
-sudo certbot --apache -d devcopy.mxtracks.info
-sudo apache2ctl configtest && sudo systemctl reload apache2
-```
-
-### Multi-database approach
-`MYSQL_DATABASE` in `.env` creates one initial DB. The migration script creates
-additional databases (`wordpress`, `wordpress_mxtracks`) directly via the root
-user after the container starts — no extra `docker-compose.yml` changes needed.
-
-### WordPress URL fix
-After DNS points to the new domain, run per site:
-```bash
-docker compose exec apache wp --path=/var/www/html/<subdir>/wordpress \
-  search-replace 'https://<old-domain>' 'https://<new-domain>' \
-  --all-tables --skip-columns=guid
-```
-
----
-
-## Apache stack – mirror sync
-
-`apache/sync-to-mirror.sh` streams the running Docker Apache+WordPress stack from
-the source server (latitude) to a standby mirror (mac2016).
-
-### Topology
-| Role | Host | OS | Data path |
-|------|------|----|-----------|
-| **Source** (production) | `latitude` | Ubuntu Linux | `APACHE_DATA_DIR=/srv/www.docker` |
-| **Mirror** (standby) | `mac2016` | macOS | `MIRROR_DATA_DIR=~/git/dockerApache/apache/data` |
-
-### Site mapping
-| Source domain | Mirror domain | DB | www subdir |
-|---------------|--------------|-----|------------|
-| `devcopy.mxtracks.info` | `dev16.mxtracks.info` | `wordpress` | `dev.mxtracks` |
-| `wwwcopy.mxtracks.info` | `www16.mxtracks.info` | `wordpress_mxtracks` | `mxdocs` |
-
-### What it does (per site)
-1. Prepares / starts mirror Docker stack (starts Docker Desktop on macOS if needed)
-2. Drops + recreates DB on mirror, streams `mysqldump` source → mirror via SSH pipe
-3. `rsync --delete` web root source → mirror (incremental, no temp files)
-4. Patches `wp-config.php` on mirror (`WP_HOME`, `WP_SITEURL`, `DB_HOST`, HTTPS proxy detection)
-5. Sets `siteurl` / `home` WordPress options directly in mirror DB
-6. Writes mirror vhost config into `MIRROR_DATA_DIR/vhosts/<domain>.conf`
-7. `apache2ctl graceful` inside mirror container
-
-### Running
-```bash
-# On latitude (interactive session):
-cd ~/git/dockerApache/apache
-./sync-to-mirror.sh
-
-# Nightly cron:
-0 3 * * * /home/hannes/git/dockerApache/apache/sync-to-mirror.sh >> /var/log/apache-mirror-$(date +\%Y\%m\%d).log 2>&1
-```
-
-### Key `.env` variables for sync
-```dotenv
-MIRROR_HOST=mac2016
-MIRROR_USER=hannes
-MIRROR_SSH_PORT=22
-MIRROR_APACHE_DIR=~/git/dockerApache/apache
-MIRROR_DATA_DIR=~/git/dockerApache/apache/data
-MIRROR_MYSQL_ROOT_PASSWORD=changeme_root
-MIRROR_HTTP_PORT=8080
-MIRROR_EXTRA_PATH=/usr/local/bin    # Docker Desktop on macOS
-MIRROR_SHELL=zsh
+python3 /usr/local/bin/beelink-job-status --report
+systemctl list-timers 'beelink-job-*'
+sudo journalctl -u beelink-job-monitor.service --no-pager
 ```

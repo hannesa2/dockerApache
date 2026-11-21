@@ -1,51 +1,20 @@
 import contextlib
 import importlib.util
 import json
-import os
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
 
 
-ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "monitoring/reconcile-latitude-files.sh"
 SPEC = importlib.util.spec_from_file_location(
-    "file_reconciliation", ROOT / "monitoring/check-beelink-reconciled-files.py")
+    "file_reconciliation", Path(__file__).resolve().parents[1] /
+    "monitoring/check-beelink-reconciled-files.py")
 FILES = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(FILES)
 
 
 class FileReconciliationTest(unittest.TestCase):
-    def test_explicit_mode_and_source_host_required(self):
-        result = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("--sync-frozen", result.stderr)
-        with tempfile.TemporaryDirectory() as temporary:
-            for name, response in (("id", "0"), ("hostname", "beelink")):
-                path = Path(temporary) / name
-                path.write_text("#!/bin/sh\nprintf '%s\\n' '" + response + "'\n")
-                path.chmod(0o755)
-            result = subprocess.run(
-                ["bash", str(SCRIPT), "--sync-frozen"], capture_output=True, text=True,
-                env=dict(os.environ, PATH=temporary + os.pathsep + os.environ["PATH"]))
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("directly on Latitude", result.stderr)
-
-    def test_sync_preserves_adapted_configs_and_upgraded_core(self):
-        source = SCRIPT.read_text()
-        for expected in (
-            "--exclude=/wordpress/wp-config.php", "--exclude=/wordpress/",
-            "--exclude=/config/config.ini.php", "--exclude=/tmp/",
-            "--dry-run --itemize-changes", "--network none", "--read-only",
-            "--chown=10001:10001", "files-sync-pending.json",
-        ):
-            self.assertIn(expected, source)
-        self.assertNotIn("--inplace --", source)
-        self.assertNotIn("gitlab-backup", source)
-        self.assertNotIn("systemctl stop cron", source)
-
     def fixture(self, root):
         transfer = root / "transfer"
         transfer.mkdir()

@@ -96,7 +96,7 @@ class BeelinkJobsTest(unittest.TestCase):
 
     def test_wrong_host_does_not_modify_source(self):
         with patch.object(JOBS.os, "getuid", return_value=0), \
-                patch.object(JOBS.socket, "gethostname", return_value="latitude"):
+                patch.object(JOBS.socket, "gethostname", return_value="other-host"):
             with self.assertRaisesRegex(RuntimeError, "directly on beelink"):
                 JOBS.guard()
 

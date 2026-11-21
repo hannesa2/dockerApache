@@ -56,18 +56,11 @@ Pfad: `nextcloud/`
 - Keine hardcodierten Produktionspfade oder Container-internen Datenorte in die allgemeine Doku schreiben
 - Bei Risiko von Portkonflikten immer die `.env`-Konfiguration prüfen
 - Private Schlüssel, `.env`-Dateien und Certbot-Accountdaten niemals ausgeben, committen oder in Logs kopieren.
-- Auf `latitude` ist der Snap-Certbot-Timer der aktive Erneuerungsdienst; den deaktivierten `certbot.timer` nicht ohne vorherige Prüfung wieder aktivieren.
-- Zertifikate für `dev16.mxtracks.info` und `www16.mxtracks.info` sowie (nach erfolgreicher Erstausstellung) `git16.mxtracks.info` werden durch Certbots Deploy-Hook nach erfolgreicher Erneuerung automatisch per eingeschränktem SSH-Schlüssel nach `mac2016` übertragen. Der Hook ist unter `/etc/letsencrypt/renewal-hooks/deploy/mac2016-cert-deploy` installiert.
-- Der SSH-Schlüssel darf ausschließlich `~/bin/mac2016-cert-receiver.sh` ausführen. Keine interaktive Anmeldung und keinen allgemeinen SSH-Zugang für den Zertifikatstransfer einrichten.
-- Der Empfänger installiert Zertifikat und privaten Schlüssel in `/Users/hannes/server/apache/certs`, prüft die Apache-Konfiguration im OrbStack-Container und lädt Apache graceful neu. Schlüsselberechtigungen müssen `0600` bleiben.
-- Certbot-Deploy-Hooks laufen nur nach einer tatsächlich erfolgreichen Zertifikatserneuerung, nicht bei jedem Timerlauf. Zum gezielten erneuten Verteilen eines bereits ausgestellten Zertifikats den installierten Hook mit `RENEWED_LINEAGE=/etc/letsencrypt/live/<domain>` ausführen; keine unnötige erzwungene Neuausstellung (`--force-renewal`) durchführen.
-- Nach Änderungen an der Certbot-Konfiguration beide Zertifikate mit `sudo snap run certbot.renew --dry-run --cert-name <domain>` testen. Ein Dry-Run löst nicht in jeder Certbot-Version Deploy-Hooks aus; den SSH-Transfer separat über den installierten Deploy-Hook validieren.
-- Änderungen am SSH-Empfänger oder an den Hook-Skripten auf beiden Hosts prüfen. Keine Zertifikate oder privaten Schlüssel zu Testzwecken in Repository-Dateien oder temporäre Git-Dateien kopieren.
-- Die GitLab-CE-Standby-Instanz unter `gitlab/` ist eine unabhängige Tagesbackup-Kopie von `latitude`, keine Live-Replikation. Änderungen am Standby fließen nicht zurück in Produktion; im Desasterfall vor dem Failover einen Split-Brain durch Abschalten/Isolieren der Latitude-Instanz verhindern.
-- GitLab wird täglich über ein temporäres Latitude-Backup automatisch nach mac2016 wiederhergestellt. Bestehende Backup-Verzeichnisse werden nicht übertragen und mac2016 erstellt keine eigenen GitLab-Backups. `/Users/hannes/server/gitlab/backups/.sync` ist nur ein temporärer Restore-Arbeitsbereich und wird nach jedem Lauf entfernt; keine historischen Archive aufbewahren. `gitlab-secrets.json` wie privates Schlüsselmaterial behandeln.
-- Standby- und Produktions-GitLab-Version müssen für Restore exakt übereinstimmen. Die Standby-Compose-Datei pinnt derzeit `19.5.3-ce.0`; Upgrades koordiniert und erst nach erfolgreichem Backup/Test durchführen. Neue Sync-IDs verwenden die laufende Latitude-Version; bei alten IDs ist die von GitLab geprüfte Archiv-Metadatenversion maßgeblich.
-- Die tägliche GitLab-Backup-Übertragung verwendet auf `latitude` einen eigenen eingeschränkten SSH-Schlüssel und auf mac2016 einen validierenden Empfänger; nicht mit dem separaten Zertifikat-Deploy-Schlüssel zusammenlegen oder deren erzwungene Befehle erweitern.
-- `gitlab/restore-standby.sh` verweigert die manuelle initiale Wiederherstellung über bestehenden GitLab-Daten. Der tägliche Empfänger darf dagegen die bestätigte Standby-Instanz ersetzen: während Restore keine Anfragen/Jobs zulassen, bei fehlgeschlagenem Restore nginx, puma und sidekiq gestoppt lassen und den Fehler melden. Mirror-only-Änderungen werden beim täglichen Sync überschrieben.
+- Production runs on beelink; mac2016 is the standby mirror. Use the managed systemd jobs in `monitoring/beelink-jobs.py` for backups, mirror syncs and availability checks.
+- Certificate renewal and deployment are managed by `monitoring/renew-beelink-certificates.py` and `beelink-certificates.timer`. Keep private keys and certificate material out of the repository and logs.
+- GitLab is backed up from beelink to mac2016 using a dedicated restricted SSH key and validating receiver. Never combine it with the certificate-deploy key or weaken either forced command.
+- The mirror is an independent copy, not live replication. Verify the latest successful job and keep production/mirror GitLab versions compatible before restore or failover.
+- Treat `gitlab-secrets.json`, host `.env` files and all encrypted configuration backups as private key material.
 
 ## Geeignetes Verhalten für Copilot
 
@@ -75,7 +68,8 @@ Pfad: `nextcloud/`
 - Priorisiere kleine, gezielte Konfigurationsänderungen.
 - Wenn du ein neues Feature ergänzt, dokumentiere die Nutzung direkt in der passenden README oder Stack-Doku.
 - Halte die Projektstruktur sauber: Stack-spezifische Dateien bleiben in ihrem jeweiligen Ordner.
-- Bei Zertifikatsarbeiten zuerst den Erneuerungsstatus auf `latitude`, den eingeschränkten Deploy-Hook und die Zertifikatspfade auf `mac2016` prüfen; bestehende Zertifikate nicht ungefragt neu ausstellen.
+- Bei Zertifikatsarbeiten zuerst den Erneuerungsstatus auf beelink und mac2016 sowie die eingeschränkten Deploy-/Empfängerpfade prüfen; bestehende Zertifikate nicht ungefragt neu ausstellen.
+
 
 ## Verfügbare Einstiegspunkte
 

@@ -163,20 +163,20 @@ def gitlab_config(source):
             r"""(?:"([^"\n]*)"|'([^'\n]*)'|([0-9]+))[ \t]*(?:#.*)?$""",
             source)
         if len(matches) != 1:
-            raise RuntimeError("Latitude GitLab SMTP relay settings are incomplete or ambiguous")
+            raise RuntimeError("GitLab SMTP relay settings are incomplete or ambiguous")
         value = next((value for value in matches[0] if value != ""), None)
         if value is None:
-            raise RuntimeError("Latitude GitLab SMTP relay settings are incomplete")
+            raise RuntimeError("GitLab SMTP relay settings are incomplete")
         settings[key] = value
     if not settings["smtp_address"].strip() or any(
             char.isspace() for char in settings["smtp_address"]):
-        raise RuntimeError("Latitude GitLab SMTP relay address is invalid")
+        raise RuntimeError("GitLab SMTP relay address is invalid")
     try:
         port = int(settings["smtp_port"])
     except ValueError as error:
-        raise RuntimeError("Latitude GitLab SMTP relay port is invalid") from error
+        raise RuntimeError("GitLab SMTP relay port is invalid") from error
     if not 1 <= port <= 65535:
-        raise RuntimeError("Latitude GitLab SMTP relay port is invalid")
+        raise RuntimeError("GitLab SMTP relay port is invalid")
     config = source + "\n\n" + GITLAB_CONFIG
     if port == 465:
         config += ("gitlab_rails['smtp_tls'] = true\n"
@@ -228,7 +228,7 @@ def upgrade_restricted_config(existing, desired):
         raise RuntimeError("GitLab configuration backup already exists; inspect before proceeding")
     source = RUNTIME / "host-configuration/srv/gitlab/config/gitlab.rb"
     if source.is_symlink() or not source.is_file():
-        raise RuntimeError("Missing original Latitude GitLab configuration")
+        raise RuntimeError("Missing source GitLab configuration")
     new_gitlab_config = gitlab_config(source.read_text())
     shutil.copyfile(config_path, backup)
     backup.chmod(0o600)
@@ -262,7 +262,7 @@ def prepare():
         return
     source_gitlab_config = RUNTIME / "host-configuration/srv/gitlab/config/gitlab.rb"
     if source_gitlab_config.is_symlink() or not source_gitlab_config.is_file():
-        raise RuntimeError("Missing original Latitude GitLab configuration")
+        raise RuntimeError("Missing source GitLab configuration")
     prepared_gitlab_config = gitlab_config(source_gitlab_config.read_text())
     if any((APPS / name).exists() for name in ("owncloud", "gitlab", "redis")):
         raise RuntimeError("Unmanaged application directories exist; inspect before retrying")

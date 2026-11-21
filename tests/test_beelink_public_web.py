@@ -41,7 +41,7 @@ class PublicWebTest(unittest.TestCase):
 
     def test_wrong_host_rejected(self):
         with patch.object(WEB.os, "getuid", return_value=0), \
-                patch.object(WEB.socket, "gethostname", return_value="Latitude"), \
+                patch.object(WEB.socket, "gethostname", return_value="other-host"), \
                 patch("sys.argv", ["publish", "--publish-lan"]):
             with self.assertRaisesRegex(RuntimeError, "directly on beelink"):
                 WEB.main()

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # deploy-certs-to-mirror.sh
 # ─────────────────────────────────────────────────────────────────────────────
-# Copies Let's Encrypt certs issued on latitude → mac2016 and reloads native
+# Copies Let's Encrypt certs issued on beelink → mac2016 and reloads native
 # Apache there.
 #
 # Run ONCE manually after initial cert issuance:
@@ -92,4 +92,3 @@ log ""
 log "════════════════════════════════════════════════════════════"
 log "  Done.  Log: $LOG"
 log "════════════════════════════════════════════════════════════"
-

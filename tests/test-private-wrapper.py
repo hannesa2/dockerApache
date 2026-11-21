@@ -222,7 +222,7 @@ class PrivateWrapperTest(unittest.TestCase):
         result = self.run_wrapper("--crypt", "apache")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.plain[0].unlink()
-        result = self.run_wrapper("--decrypt", "apache", env=dict(self.env, TEST_HOST="latitude"))
+        result = self.run_wrapper("--decrypt", "apache", env=dict(self.env, TEST_HOST="other-host"))
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.plain[0].exists())
         result = self.run_wrapper("--crypt", "nextcloud", env=dict(self.env, TEST_HOST="../unsafe"))

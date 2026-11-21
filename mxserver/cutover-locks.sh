@@ -8,7 +8,8 @@ acquire_cutover_locks() {
         return 1
     }
     exec {CUTOVER_BACKUP_FD}>>"$backup_lock"
-    if ! flock -n "$CUTOVER_BACKUP_FD"; then
+    if ! python3 -c 'import fcntl, sys; fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)' \
+        "$CUTOVER_BACKUP_FD"; then
         echo "ERROR: PostgreSQL backup is already running." >&2
         exec {CUTOVER_BACKUP_FD}>&-
         unset CUTOVER_BACKUP_FD

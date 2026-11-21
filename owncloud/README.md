@@ -33,9 +33,9 @@ systemctl status beelink-job-owncloud.timer beelink-job-owncloud.service --no-pa
 sudo journalctl -u beelink-job-owncloud.service -n 100 --no-pager
 ```
 
-The implementation remains `sync-latitude.sh` for compatibility with the
-installed job path; it runs only in beelink production mode. Updating the
-repository does not update the root-owned installed copy automatically.
+The implementation is `sync-beelink.sh` and runs only in beelink production
+mode. Updating the repository does not update the root-owned installed copy
+automatically.
 Do not run a manual sync while another is active or while the mirror is
 accepting independent production writes.
 

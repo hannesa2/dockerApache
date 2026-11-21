@@ -1,3 +1,4 @@
+import fcntl
 from pathlib import Path
 import subprocess
 import tempfile
@@ -56,7 +57,8 @@ class CutoverLocksTest(unittest.TestCase):
         result = self.run_guard('acquire_cutover_locks "$1" "$2"')
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(self.mirror.is_dir())
-        self.assertEqual(subprocess.run(["flock", "-n", str(self.backup), "true"]).returncode, 0)
+        with self.backup.open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
     def test_missing_and_symlinked_backup_locks_are_rejected(self):
         self.backup.unlink()

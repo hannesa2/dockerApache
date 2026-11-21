@@ -24,7 +24,7 @@ class BeelinkApplicationsTest(unittest.TestCase):
 
     def test_rejects_source_host_before_reading_data(self):
         with patch.object(APPS.os, "getuid", return_value=0), \
-                patch.object(APPS.socket, "gethostname", return_value="latitude"), \
+                patch.object(APPS.socket, "gethostname", return_value="other-host"), \
                 patch("sys.argv", ["start-beelink-apps", "--start-isolated"]), \
                 patch.object(APPS.os, "listdir") as listdir:
             with self.assertRaisesRegex(RuntimeError, "root directly on beelink"):

@@ -16,7 +16,7 @@ SPEC.loader.exec_module(MIGRATION)
 class BeelinkFeatureMigrationTest(unittest.TestCase):
     def test_wrong_host_does_not_prepare(self):
         with patch.object(MIGRATION.os, "getuid", return_value=0), \
-                patch.object(MIGRATION.socket, "gethostname", return_value="latitude"), \
+                patch.object(MIGRATION.socket, "gethostname", return_value="other-host"), \
                 patch("sys.argv", ["prepare", "--prepare-stopped"]), \
                 patch.object(MIGRATION, "prepare") as prepare:
             with self.assertRaisesRegex(RuntimeError, "directly on beelink"):

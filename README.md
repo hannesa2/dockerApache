@@ -102,9 +102,11 @@ Docker-Konfiguration statt eines früher gespeicherten Pfads. In einem
 frischen Checkout ohne lokalen Prüfstatus gilt wieder der Plattform-Standard.
 Verschlüsselte Kopien liegen in `private-config/gpg/`; beim Entschlüsseln
 erhalten sie den kurzen Hostnamen vor `.enc`, z. B.
-`apache.env.mac2016.enc`, `nextcloud.env.latitude.enc` und
-`matomo-config.ini.beelink.enc`. `--decrypt` verwendet nur Dateien für den
-aktuellen kurzen Hostnamen (`hostname -s`). Unterschiedliche Rechner müssen
+`apache.env.mac2016.enc` und
+`matomo-config.ini.beelink.enc`. Bestehende verschlüsselte Alt-Konfigurationen
+bleiben erhalten und werden nicht als beelink-Konfiguration verwendet.
+`--decrypt` verwendet nur Dateien für den aktuellen kurzen Hostnamen
+(`hostname -s`). Unterschiedliche Rechner müssen
 eindeutige Hostnamen haben. Nach einer Umbenennung des Rechners muss die
 zugehörige Sicherungsdatei entsprechend umbenannt werden.
 
@@ -262,431 +264,55 @@ Everything Apache and MySQL stores is then written under `/mnt/mydata/`:
   mysql-config/        ← Custom MySQL config (*.cnf)
 ```
 
-### Deploying Let’s Encrypt certificates from latitude
+### Production host and scheduled operations
 
-On this setup, Certbot on `latitude` renews `www16.mxtracks.info` and
-`dev16.mxtracks.info`. The deploy hook is also prepared to deploy
-`git16.mxtracks.info` once its certificate has been issued. It sends only those
-certificates to `mac2016` using a dedicated SSH key restricted to the
-certificate receiver. After installing a renewed pair, the receiver validates
-Apache's configuration and gracefully reloads Apache. The private keys are
-installed with mode `0600`; they are not stored in this repository. The Snap
-Certbot timer is the active renewal timer; the duplicate distribution-package
-timer is disabled.
+Production runs on **beelink**; **mac2016** is the standby mirror. The
+beelink systemd jobs back up PostgreSQL and synchronize Apache/WordPress,
+GitLab, ownCloud, MXServer, and Matomo to mac2016. They share lifecycle locks,
+verify the encrypted data mount, and report job status and failures.
 
-The scripts are `apache/letsencrypt-deploy-hook.sh` (installed on latitude as
-`/etc/letsencrypt/renewal-hooks/deploy/mac2016-cert-deploy`) and
-`apache/mac2016-cert-receiver.sh` (installed on macOS as
-`~/bin/mac2016-cert-receiver.sh`). The receiver is specific to this host’s
-OrbStack context, Compose file, and `/Users/hannes/server/apache/certs` data
-directory. Run a Certbot dry-run after changing renewal settings:
+Certificate renewal and deployment are managed on beelink by
+`monitoring/renew-beelink-certificates.py` and the
+`beelink-certificates.timer`. The renewal job deploys active certificates to
+the local frontend and DNS services, then transfers mirror certificates to
+mac2016. Check the timer and recent logs with:
 
 ```bash
-sudo snap run certbot.renew --dry-run --cert-name dev16.mxtracks.info
-sudo snap run certbot.renew --dry-run --cert-name www16.mxtracks.info
+systemctl status beelink-certificates.timer --no-pager
+sudo journalctl -u beelink-certificates.service -n 100 --no-pager
 ```
 
-### GitLab CE standby copy
-
-The GitLab CE service in `gitlab/docker-compose.yml` is a separate standby copy
-of the GitLab instance on `latitude`, pinned to the same GitLab version. On
-mac2016 it has no published host ports; it shares the private `gitlab_proxy`
-Docker network with the Apache container. Apache selects the backend vhost from
-the request hostname and reverse-proxies `git16.mxtracks.info` to GitLab over
-internal HTTP. TLS terminates at Apache on port `443`; the GitLab container
-does not manage certificates. Its config, logs and application data live under
-`/Users/hannes/server/gitlab/`. There is currently no `git16.mxtracks.info`
-certificate; HTTPS will become available after issuance and deployment.
-
-DNS only resolves each hostname to an IP address; Apache routes by the HTTP
-`Host` header and TLS SNI. The router must forward public TCP `9080` to
-mac2016's host port `9080` for that legacy HTTP endpoint. GitLab's canonical URL
-is now `https://git16.mxtracks.info/`, intended for home-LAN access. A private
-`apache/docker-compose.override.yml` publishes host TCP `443` to container
-TCP `443`; the existing high-port bindings remain available.
-LAN DNS must resolve `git16.mxtracks.info` to mac2016 (`192.168.178.23` or
-`192.168.178.70`), without returning the public IPv6 address. This DNS/client
-configuration is separate from the server setup; changing the GitLab URL does
-not configure the router's DNS. No public TCP 443 forwarding change is needed
-for LAN-only use. If
-`git16.mxtracks.info:9080` shows macOS's native Apache welcome page, check that
-forwarding target: the request is reaching native port `80` rather than the
-Docker Apache port. No additional public port is needed.
-
-The Apache vhost snippets are `gitlab/apache-git16-http.conf` and
-`gitlab/apache-git16-https.conf`. The HTTP vhost proxies requests to the
-internal GitLab service. Enable the HTTPS vhost after the matching Let's
-Encrypt certificate has been deployed to mac2016.
-
-The source-side job creates a consistent GitLab backup once per day and streams
-it to mac2016 over SSH. The dedicated SSH key can run only
-`~/bin/gitlab-mac-backup-receiver.sh`; the receiver validates the archive
-and matching GitLab version before automatically restoring the mirror.
-It refuses a transfer if less than 50 GiB is free. Archives are temporary:
-`/Users/hannes/server/gitlab/backups/.sync` holds the restore workspace and
-is removed after each run, including failures. Existing backup directories
-on Latitude are not copied, and mac2016 does not create its own GitLab backups.
-The source retains a pending snapshot only until the mirror confirms success,
-so a failed run can be retried. Private keys and secrets never belong in this
-repository.
-
-This is a daily snapshot sync, not continuous replication. The 03:15 Latitude
-job briefly interrupts GitLab on mac2016 for restoration, replaces its data
-and encryption secrets with the source snapshot, and preserves the mirror's
-own `gitlab.rb` URL/proxy settings. Mirror-only writes are overwritten.
-On a failed restore, the receiver leaves nginx, puma and sidekiq stopped rather
-than serving partially restored data; inspect the logs and retry the sync.
-If the receiver was killed without cleanup, inspect the lock under
-`~/.local/state/gitlab-mac-sync/lock` and `.sync` before removing either.
-The last successfully restored ID is recorded in
-`~/.local/state/gitlab-mac-sync/last-restored-id`.
-In a disaster, isolate Latitude before promoting mac2016. Keep both GitLab
-versions identical. No historical backup archives are retained on mac2016.
-The mirror image is pinned to `19.5.3-ce.0`. New snapshot IDs use the running
-Latitude version; retries keep their original ID, while GitLab checks the
-actual archive metadata for version compatibility, not the filename suffix.
-The sender uses `mac2016.local` (overridable with `MIRROR_HOST`) and verifies
-the existing `mac2016` host-key entry; the short name is not reliably resolved
-on Latitude.
-`gitlab/restore-standby.sh` requires separately supplied archives for a manual
-initial restore. Public DNS/reverse-proxy cutover remains a separate step.
-
-`www16`, `dev16` and `git16` all use the same MyFRITZ CNAME target, so use the
-same HTTP-01 standalone flow as the existing `www16` and `dev16` lineages.
-Apache on latitude must be stopped briefly so Certbot can listen on port 80.
-For the initial issuance, run this on latitude; the shell trap restarts Apache
-even if Certbot fails:
+The job schedules and read-only health/status commands are defined in
+`monitoring/beelink-jobs.py`. On beelink, inspect the last results with:
 
 ```bash
-sudo bash -c '
-set -e
-systemctl stop apache2
-trap "systemctl start apache2" EXIT
-snap run certbot certonly --standalone \
-  --cert-name git16.mxtracks.info \
-  -d git16.mxtracks.info
-'
+python3 /usr/local/bin/beelink-job-status --report
+systemctl list-timers 'beelink-job-*'
 ```
 
-After successful issuance, deploy the initial certificate to mac2016 using the
-installed restricted deploy hook:
-
-```bash
-sudo env RENEWED_LINEAGE=/etc/letsencrypt/live/git16.mxtracks.info \
-  /etc/letsencrypt/renewal-hooks/deploy/mac2016-cert-deploy
-```
-
-The existing Certbot pre/post hooks stop and start Apache during future
-standalone renewals; the deploy hook transfers each renewed certificate to
-mac2016 and reloads its Apache container.
-
-The standby can be restored and run without a `git16` certificate; the
-certificate is needed only to enable HTTPS at Apache. On the first restore,
-GitLab's data/config/logs directories must be empty. Run the restore helper
-from the repository:
-
-```bash
-./gitlab/restore-standby.sh
-```
-
-It restores the newest received backup by default, verifies the archive,
-secrets file and available storage, and refuses to overwrite existing GitLab
-state unless resuming an interrupted restore. Test it only when intentionally
-initializing the standby; for a routine backup, the scheduled job transfers
-data without starting or modifying the standby GitLab service.
+mac2016 runs `monitoring/systems-health-check-mac.sh` hourly at minute 10.
+It checks mac2016 locally and queries beelink over SSH; the hourly beelink
+monitor checks production services and job freshness. Preserve the explicit
+`HOME` and `PATH` in mac2016's cron entry.
 
 ### GitHub artifacts mirror
 
-The `/github` file-management app on beelink is mirrored on mac2016 as a
-private `github-artifacts` container, based on the pinned
-`githubArtifactsPy` submodule revision `b657c71b4e025bfdcc4f2418c70e15301010b62a`.
-Apache proxies `/github/` from the `www16.mxtracks.info` vhost to the app over
-the private Compose network. The app's WSGI prefix handling preserves its
-subpath URLs. The app has no published host port.
+The `/github` file-management app runs on beelink and is mirrored on mac2016
+by `github-artifacts/sync-beelink.py`. Its private upload files and parameter
+file stay outside the repository. Disable the mirror sync before promoting
+mac2016 as the writable primary.
 
-The initial upload files and `parameter.yml` live outside the repository under
-`/Users/hannes/server/githubArtifactsPy/`. The parameter file contains the
-same upload authentication as production and must remain private.
-Do not commit it. A macOS LaunchAgent runs the installed copy of
-`github-artifacts/sync-beelink.py`
-at 03:35 each day. It stages the beelink container's artifact files before
-applying an exact mirror, including deletions. Replaced and deleted files are
-retained under `~/server/githubArtifactsPy/sync-backups/`; monitor disk space.
-The LaunchAgent needs an active macOS user session, Docker on beelink and SSH.
-Disable the sync before promoting mac2016 as the writable primary.
+### ownCloud and MXServer mirrors
 
-The existing HTTPS listener on host port `9443` remains unchanged. A second
-local alias on host port `8443` serves the same Apache vhost, so the mirror URL
-is `https://www16.mxtracks.info:8443/github/`. The host listener is added by
-Compose; this setup does not change the FRITZ!Box port-forwarding rules.
-
-### Matomo/Piwik mirror
-
-On mac2016, Apache, GitLab, GitHub Artifacts and Nextcloud data reside under
-`/Users/hannes/server/{apache,gitlab,githubArtifactsPy,nextcloud}` on internal
-storage. ownCloud and MXServer data reside on the external Samsung T5 at
-`/Volumes/SamsungT5_1T/ownCloudBackup/owncloud` and
-`/Volumes/SamsungT5_1T/MXServerMirror`. Their installed Latitude sync jobs
-retain the daily 04:00 and 04:30 schedules. After changing these volume paths,
-run `sudo bash monitoring/relocate-t7-sync-paths.sh` on Latitude to update the
-root-owned installed copies as well as the repository scripts.
-Private `.env` files and `docker-compose.override.yml` files retain the running
-services' credentials and host-specific settings; do not commit them.
-The mac2016 health monitor checks the data directories and a 50 GiB free-space
-reserve. The GitLab backup receiver also requires at least 50 GiB free before
-accepting a new backup.
-The internal filesystem is case-insensitive, so the existing MySQL databases
-were migrated by SQL export/import rather than reusing the case-sensitive
-external disk's MySQL binary data directory.
-
-Matomo under `mxdocs/piwik` is served directly by the existing
-Apache/PHP container at `https://www16.mxtracks.info:8443/piwik/`, including
-the tracking endpoint `piwik.php`. `monitoring/sync-matomo.py` copies application
-code and a consistent `piwik_db` snapshot from the **native production**
-installation on Latitude, not the outdated Docker copy. The mirror retains its
-own database credentials (`db` / `matomo_mirror`) and trusted hostnames.
-Shipped configuration defaults (`config/global.ini.php` and related files) are
-updated with the application code; only the private `config.ini.php*` files are
-excluded from that copy. The defaults checksum is verified before reopening
-the mirror.
-The WordPress sync excludes `/piwik` from file copying and URL rewriting.
-
-On Latitude, install the daily **04:45** sync and availability-mail reporting:
-
-```bash
-sudo bash monitoring/install-latitude-matomo-sync.sh
-```
-
-The installer requires a successful initial sync before enabling cron (a success
-within the preceding 24 hours is reused). Run manually as `hannes` on Latitude:
-
-```bash
-/usr/local/sbin/run-sync-with-email "Matomo mirror sync" \
-  /usr/bin/python3 /home/hannes/git/dockerApache/monitoring/sync-matomo.py --apply
-```
-
-Without `--apply`, only preflight checks run. Production is never stopped or
-modified. Mirror `/piwik` returns HTTP 403 while its code/database are replaced;
-on failure it remains blocked rather than serving an inconsistent installation.
-Previous mirror database/config snapshots are retained in
-`~/.local/state/matomo-mirror/pre-sync-*` on mac2016. Review and remove obsolete
-snapshots manually as needed. Before retrying a failed replacement, inspect the
-error and backup. The sync reuses an existing root `piwik/.htaccess` only if it
-contains exactly `Require all denied` followed by a newline; other contents and
-symlinks abort the sync. Leave this block in place during retries; it is removed
-only after replacement checks pass. Do not remove Matomo's subdirectory access controls.
-Mirror-only tracking and configuration changes are overwritten on the next sync,
-never replicated back. Runtime credentials and backups are private; never commit
-them. Current paths default to `/srv/www/vhosts/mxdocs/piwik` on Latitude and
-`/Users/hannes/server/apache/www/mxdocs/piwik` on mac2016; the script accepts
-`MATOMO_SOURCE_DIR` and `MATOMO_MIRROR_DIR` overrides.
-
-On latitude, native Apache serves the primary Matomo installation from
-`/srv/www/vhosts/mxdocs/piwik`. PHP 8.4-FPM is enabled only for PHP URLs below
-`/piwik/` using Apache's late per-request `<If>` section, so it overrides the
-global legacy mod_php handler without changing other sites. Install the scoped
-handler and reload Apache:
-
-```bash
-sudo install -o root -g root -m 0644 apache/latitude-matomo-php84.conf \
-  /etc/apache2/conf-available/latitude-matomo-php84.conf
-sudo a2enconf latitude-matomo-php84
-sudo apache2ctl configtest && sudo systemctl reload apache2
-```
-
-PHP 8.4-FPM and its required extensions must be installed and active. If the
-config test fails, disable the new snippet with
-`sudo a2disconf latitude-matomo-php84` before making other Apache changes.
-
-### ownCloud
-
-Production runs on beelink; mac2016 hosts the standby mirror. The scheduled
-beelink job synchronizes the mirror daily. See
-[`owncloud/README.md`](owncloud/README.md) for endpoints, storage, and job status.
-
-### Hourly system availability monitor
-
-The hourly check runs as the `hannes` user on latitude, checks the host
-services and Docker applications on both latitude and mac2016, and checks
-their HTTP endpoints. A second monitor runs from mac2016 so Latitude failures
-are reported even if Latitude never starts. Both send an initial report, then
-email only when checks fail or recover; unchanged failures are logged without
-hourly email spam.
-
-Both monitors also check the production Home Assistant on beelink: its HTTP
-endpoint over the LAN and its Docker container over SSH. They no longer expect
-the retired Latitude Home Assistant container to run. Each monitor needs
-passwordless SSH access to beelink and a verified host key in `known_hosts`;
-SSH failures and HTTP failures are reported independently.
-
-GitLab login-page checks allow 30 seconds on both hosts, compared with 8
-seconds for other HTTP checks. This still checks the real login route; a
-healthy container alone does not prove the web application is available.
-
-Both availability emails include a Latitude sync-job overview: last start,
-finish, result, last successful completion, and the next expected run from
-enabled entries in the `hannes` crontab and `/etc/cron.d`. Expected times use
-Latitude's timezone and assume the host and cron are running. Unscheduled jobs
-(including ownCloud when no schedule is installed) are explicitly identified.
-Missing historical timestamps are reported as unknown, not guessed from log
-modification times. Job timing does not add hourly emails: unchanged
-availability still suppresses notifications.
-
-Install timestamp recording directly on Latitude:
-
-```bash
-sudo bash monitoring/install-sync-job-status.sh
-```
-
-The existing job-email wrapper writes atomic, credential-free status records
-under `/home/hannes/.local/state/sync-job-notify/status/`. The installer also
-wraps the existing Nextcloud cron command without changing its schedule.
-Job emails show the source host and expected destination, including local
-PostgreSQL backups and the mac2016 mirror jobs. Apache and Nextcloud mirror
-destinations are read from their Latitude `.env` files; the paths for the
-other mirror jobs match their current Latitude/mac2016 scripts and must be
-updated in the notification wrapper when those scripts change. An unknown
-or unresolvable target is reported as unknown, not as a successful transfer.
-Re-run the installer after changing the email wrapper to update the installed copy.
-
-The Latitude PostgreSQL backup saves the host database `MXServer`, the three
-Docker camera databases, and the production Docker database `owncloud_stage`.
-The host's empty `postgres` maintenance database is excluded.
-It writes private, timestamped custom-format archives under
-`/daten/sicherung.postgresql/dump/daily/`, checks that each archive can be read
-in full, and keeps completed daily backup directories for 30 days. Existing
-legacy `.bak` and `.dump` files are not changed or removed. An archive check is
-not a restore test, and a database-only backup does not include ownCloud files,
-configuration, PostgreSQL roles, or a synchronized filesystem snapshot.
-
-Before installing, configure `/home/hannes/.pgpass` with mode 0600 for
-`localhost:5432`, user `hannes`, and `MXServer`; see PostgreSQL's
-password-file documentation for escaping `:` and `\`. Then, on Latitude as
-`hannes`, run `bash monitoring/install-postgresql-backup.sh`. It checks
-connectivity, creates and verifies an initial backup, and only then switches
-the existing cron entry without changing its schedule. The old script and
-previous dumps remain untouched. Existing legacy files may still be readable
-by other local users; review their permissions separately.
-
-Existing PostgreSQL, GitLab, Apache and MXServer wrapper jobs begin recording
-on their next execution; no jobs are run by the installer. Both monitors use
-`/home/hannes/bin/sync-job-report.py` on Latitude; the mac2016 monitor retrieves
-the report over SSH and explicitly reports when Latitude cannot be reached.
-
-The manually deployed Latitude GitLab can be recreated with bounded Docker
-logs using `python3 monitoring/recreate-gitlab-logrotation.py --apply`, as a
-user with Docker socket access, while `gitlab` is stopped. The helper preserves
-the exact local image, configuration (including private environment), ports,
-and `/srv/gitlab` bind mounts; it does not upgrade GitLab. Logs are limited to
-three 50 MB files. Private original deployment metadata is saved under
-`~/.local/state/gitlab-logrotation/<timestamp>/`.
-The old container is retained as `gitlab-pre-logrotation-<timestamp>` with
-automatic restart disabled. Never start both containers: their database files
-are shared. These log bounds must also be retained in any future replacement
-deployment; changing daemon defaults does not retrofit existing containers.
-
-### Removing host PHP 7.x on latitude
-
-Latitude's legacy Apache configuration loads `conf.d/` but not all
-`conf-enabled/*.conf` snippets. If Matomo displays PHP source after module
-removal, immediately run `sudo bash monitoring/fix-latitude-php-handler.sh`.
-It explicitly includes the scoped PHP 8.4 handler via the loaded directory,
-tests/reloads Apache, verifies execution of a temporary PHP probe (removed
-on exit), and rejects Matomo responses containing PHP source. HTTP 200 alone
-is not evidence that PHP executed.
-
-The web applications use PHP 8.4 FPM; the legacy Apache PHP module and CLI
-alternatives still need to be removed separately. After repairing any Apache
-configuration errors, run the preflight and then the apply mode on latitude:
-
-```bash
-sudo bash monitoring/remove-host-php7.sh --preflight
-sudo bash monitoring/remove-host-php7.sh --apply
-```
-
-The helper routes the mxdocs web root through PHP 8.4 FPM, disables enabled
-PHP 7 Apache modules, verifies the Apache config and that Matomo and both
-WordPress endpoints retain their current HTTP responses (or mxdocs WordPress
-improves from HTTP 500 to 200), then purges installed
-PHP 7.x packages without `autoremove`. It keeps a root-only record under
-`/root/.local/state/remove-host-php7/`. The mxdocs WordPress endpoint currently
-returns HTTP 500 under the old handler; the helper allows recovery to HTTP 200
-but rejects other response changes.
-
-Do not run `--apply` while `sudo apache2ctl -t` fails. An unprivileged test
-can report certificate files as missing simply because it cannot access
-protected Let's Encrypt directories. Latitude's privileged configuration test
-passed on November 9, 2026; no certificate-path defect was established.
-
-Install it on latitude from the current checkout:
-
-```bash
-cd ~/git/dockerApache
-./monitoring/install-latitude-monitor.sh
-```
-
-The user crontab runs it at the start of every hour. Logs and notification
-state are stored under `~/.local/state/systems-health-monitor/`. This
-latitude-hosted monitor cannot send an alert while latitude itself is powered
-off or disconnected; it reports that condition only after the host runs again.
-
-Install the second monitor on mac2016 from its repository checkout:
-
-```bash
-cd ~/git/dockerApache
-./monitoring/install-mac2016-monitor.sh
-```
-
-It runs at minute 10 of every hour from the `hannes` user crontab, independently
-of an interactive login. It checks mac2016 locally and Latitude over SSH; when
-Latitude is offline, mac2016 emails that failure. mac2016 itself must be
-powered on, connected to the network, and able to send email for this alert to
-work. Its log and separate notification state are stored under
-`~/.local/state/systems-health-monitor/`.
-
-ownCloud's dedicated image provides its own PHP runtime because this legacy
-application line is incompatible with the main PHP 8.3 Apache runtime. Keeping
-the application version matched between latitude and mac2016 is essential for
-reliable standby synchronization.
-
-### MXServer standby mirror
-
-The MXServer Java EE application is built from the sibling `MXServer` checkout
-and runs in a Payara 5/Java 8 container on mac2016. Its PostgreSQL 14 database
-and picture files are independent copies synchronized daily from latitude.
-Mirror-generated email is captured privately instead of being delivered.
-Latitude MXServer runs on Docker PostgreSQL 16 at the unchanged port 5432;
-the native cluster is stopped and configured for manual startup only.
-The startup gate and recovery procedure are described in `mxserver/README.md`.
-The native data directory is retained;
-never restart it after Docker might have accepted writes without reconciling
-the data first.
-
-On mac2016, ensure `~/git/MXServer` and `~/git/dockerApache` are sibling
-checkouts, then prepare the runtime:
-
-```bash
-cd ~/git/dockerApache
-./mxserver/prepare-mirror.sh
-```
-
-On latitude, install the initial sync and daily 04:30 job:
-
-```bash
-cd ~/git/dockerApache
-sudo ./mxserver/install-latitude-sync.sh
-```
-
-The mirror endpoint is `https://www16.mxtracks.info:9433/backend/`. Apache
-terminates TLS using the existing www16 certificate; configure the router to
-forward public TCP 9433 to mac2016 port 9433. See `mxserver/README.md` for
-sync behavior and operations.
+Production ownCloud and MXServer run on beelink. Their systemd jobs synchronize
+the independent mac2016 standby copies; mirror-only changes are overwritten by
+the next successful sync. See [`owncloud/README.md`](owncloud/README.md) and
+[`mxserver/README.md`](mxserver/README.md) for service checks and mirror details.
 
 ### beelink: encrypted Samsung T7 at /daten
 
-The staged Latitude replacement procedure is documented in
-[`monitoring/beelink-replacement.md`](monitoring/beelink-replacement.md).
-An initial seed does not switch production, router forwarding or cron jobs.
+The T7 contains beelink production data and is verified by its filesystem UUID
+before managed jobs or services access it.
 
 `monitoring/setup-beelink-t7.sh` prepares the specifically identified 2 TB
 Samsung T7 (serial `H758101R0JN7T5S`) as a whole-disk LUKS2/ext4 volume.
@@ -992,12 +618,12 @@ When Nextcloud is behind a Fritz!Box and you access it via the public domain
 intercepts the request instead of forwarding it — you get a Fritz!Box error page.
 
 **Fix: start the optional `dnsmasq` split-DNS service** so LAN devices resolve
-the domain to latitude's **local IP** instead of the public one.
+the domain to beelink's **local IP** instead of the public one.
 
 ```bash
 # Add to nextcloud/.env:
-NEXTCLOUD_LOCAL_IP=192.168.178.129          # latitude's LAN IPv4
-NEXTCLOUD_LOCAL_IPV6=fdf4:be15:...          # latitude's LAN IPv6 (ip -6 addr show scope global)
+NEXTCLOUD_LOCAL_IP=192.168.178.142          # beelink LAN IPv4
+NEXTCLOUD_LOCAL_IPV6=                     # set beelink stable ULA IPv6 if available
 DNS_UPSTREAM=8.8.8.8                        # upstream DNS (not Fritz!Box – avoids loop)
 
 # Start dnsmasq
@@ -1009,7 +635,7 @@ Keep the **DNS-Rebind-Schutz** exception for `nextcloud.mxtracks.info` in place
 
 #### ⚠️ Fritz!Box-wide DNS setting does NOT work for MyFRITZ domains
 
-Setting *Bevorzugter DNSv4-Server* to `192.168.178.129` in
+Setting *Bevorzugter DNSv4-Server* to `192.168.178.142` in
 **Internet → Zugangsdaten → DNS-Server** is **not enough** when the Nextcloud
 domain is a CNAME pointing to `*.myfritz.net`:
 
@@ -1026,12 +652,12 @@ those queries to our dnsmasq. Clients must query dnsmasq directly:
 
 Android 10 and earlier:
 > Settings → Wi-Fi → **long-press** network → Modify network → Advanced options
-> → IP settings: **Static** → DNS 1: `192.168.178.129`
+> → IP settings: **Static** → DNS 1: `192.168.178.142`
 
 Android 12 – 16 (new UI, long-press removed):
 > Settings → Network & internet → Internet → tap the **⚙️ gear icon** next to
 > your Wi-Fi network → tap the **✏️ pencil icon** (top-right) → IP settings:
-> **Static** → DNS 1: `192.168.178.129`, DNS 2: `8.8.8.8`
+> **Static** → DNS 1: `192.168.178.142`, DNS 2: `8.8.8.8`
 
 Also set **Private DNS → Off** (Settings → Network & internet → Private DNS).
 
@@ -1042,7 +668,7 @@ Also set **Private DNS → Off** (Settings → Network & internet → Private DN
 Android's *Private DNS* feature uses **DNS-over-TLS (DoT)** on port 853.
 Point it at `nextcloud.mxtracks.info` — Android resolves that hostname via
 Fritz!Box (gets the public IP), connects to port 853, Fritz!Box forwards it to
-latitude's CoreDNS service (which holds the valid Let's Encrypt cert), and from
+beelink's CoreDNS service (which holds the valid Let's Encrypt cert), and from
 then on all DNS goes through dnsmasq → local IP. ✓
 
 **One-time setup:**
@@ -1060,7 +686,7 @@ then on all DNS goes through dnsmasq → local IP. ✓
 3. In Fritz!Box → **Heimnetz → Portfreigaben**: add a port forward:
    - Protocol: **TCP**
    - External port: **853**
-   - Internal host: **192.168.178.129** (latitude)
+   - Internal host: **192.168.178.142** (beelink)
    - Internal port: **853**
 
 4. On Android:
@@ -1075,9 +701,9 @@ No static IP needed — works automatically on home WiFi **and** over mobile dat
 
 Android prefers IPv6. Without an AAAA override in dnsmasq, Android receives
 the public IPv6 address and bypasses local routing. Set `NEXTCLOUD_LOCAL_IPV6`
-in `.env` to latitude's stable ULA IPv6 address:
+in `.env` to beelink's stable ULA IPv6 address:
 
 ```bash
-# Find latitude's stable ULA address (scope global, not temporary):
+# Find beelink's stable ULA address (scope global, not temporary):
 ip -6 addr show scope global | grep -v temporary
 ```

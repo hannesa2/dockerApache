@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sync-to-mirror.sh
 # ─────────────────────────────────────────────────────────────────────────────
-# Sync Apache + WordPress stack  source (latitude) → mirror (mac2016)
+# Sync Apache + WordPress stack  source (beelink) → mirror (mac2016)
 #
 # Per site it:
 #   1. Streams MySQL dump  source → mirror via SSH pipe (no temp file)
@@ -14,7 +14,7 @@
 #   /srv/www.docker/www/dev.mxtracks  (DB: wordpress)           → dev16.mxtracks.info
 #   /srv/www.docker/www/mxdocs        (DB: wordpress_mxtracks)  → www16.mxtracks.info
 #
-# Run DIRECTLY on latitude (interactive session – rsync uses SSH):
+# Run directly on beelink (interactive session – rsync uses SSH):
 #   cd ~/git/dockerApache/apache
 #   ./sync-to-mirror.sh
 #
@@ -31,7 +31,7 @@ export LANG=C
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$SCRIPT_DIR/.env" ] && source "$SCRIPT_DIR/.env"
 
-# ── Source (latitude) ─────────────────────────────────────────────────────────
+# ── Source (beelink) ──────────────────────────────────────────────────────────
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
 APACHE_DATA_DIR="${APACHE_DATA_DIR:-$SCRIPT_DIR/data}"
 MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-changeme_root}"
@@ -436,7 +436,7 @@ for site_def in "${SITES[@]}"; do
     log "      --all-tables --skip-columns=guid\""
 done
 log ""
-log "  Cron (nightly sync from latitude):"
+log "  Cron (nightly sync from beelink):"
 log "  0 3 * * * $(realpath "$0") >> /var/log/apache-mirror-\$(date +\\%Y\\%m\\%d).log 2>&1"
 
 remote "rm -f /tmp/wp-config-patch.py" || true

@@ -5,7 +5,6 @@ import argparse
 import configparser
 import fcntl
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -233,57 +232,6 @@ def deploy():
         raise
 
 
-def import_mirrors(source):
-    source = source.resolve()
-    if not source.is_relative_to("/daten/latitude-migration/cutover-20261117"):
-        raise RuntimeError("Expected private mirror certificate transfer directory")
-    if not (source / "transfer-complete").is_file():
-        raise RuntimeError("Mirror transfer is incomplete")
-    expected = {}
-    for line in (source / "SHA256SUMS").read_text().splitlines():
-        checksum, name = line.split(maxsplit=1)
-        if name not in ("letsencrypt.tar.gz", "certificate-inventory.txt") or name in expected:
-            raise RuntimeError("Unexpected mirror checksum manifest")
-        expected[name] = checksum
-    if set(expected) != {"letsencrypt.tar.gz", "certificate-inventory.txt"}:
-        raise RuntimeError("Incomplete mirror checksum manifest")
-    for name, checksum in expected.items():
-        if hashlib.sha256((source / name).read_bytes()).hexdigest() != checksum:
-            raise RuntimeError("Mirror transfer checksum mismatch: " + name)
-    if any((CONFIG / "renewal" / (name + ".conf")).exists() for name in MIRRORS):
-        raise RuntimeError("Mirror lineages already exist; inspect before importing again")
-    spec = importlib.util.spec_from_file_location(
-        "certificate_import", Path(__file__).with_name("prepare-beelink-certificates.py"))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    module.LINEAGES = MIRRORS
-    with tempfile.TemporaryDirectory(prefix="mirror-import-", dir=STATE) as temporary:
-        with tarfile.open(source / "letsencrypt.tar.gz") as archive:
-            members = module.validated_members(archive)
-            archive.extractall(temporary, members=members)
-        extracted = Path(temporary) / "etc/letsencrypt"
-        for name in MIRRORS:
-            renewal = extracted / "renewal" / (name + ".conf")
-            text = renewal.read_text().replace("/etc/letsencrypt/", str(CONFIG) + "/")
-            if any(line.lstrip().startswith(
-                    ("pre_hook =", "post_hook =", "renew_hook =", "deploy_hook ="))
-                   for line in text.splitlines()):
-                raise RuntimeError("Unexpected source-specific mirror renewal hook")
-            renewal.write_text(text)
-            renewal.chmod(0o600)
-            for kind in ("archive", "live"):
-                if (CONFIG / kind / name).exists():
-                    raise RuntimeError("Mirror certificate destination exists: " + name)
-            run("openssl", "x509", "-in", str(extracted / "live" / name / "fullchain.pem"),
-                "-noout", "-checkhost", name, "-checkend", "604800")
-        for name in MIRRORS:
-            for kind in ("archive", "live"):
-                shutil.copytree(extracted / kind / name, CONFIG / kind / name, symlinks=True)
-            shutil.copyfile(extracted / "renewal" / (name + ".conf"),
-                            CONFIG / "renewal" / (name + ".conf"))
-    log("Imported three mirror lineages; renewal/deployment test still required.")
-
-
 def deploy_mirrors():
     if not (CONFIG / "renewal" / (MIRRORS[0] + ".conf")).exists():
         return
@@ -406,7 +354,6 @@ def main():
     action.add_argument("--test-and-enable", action="store_true")
     action.add_argument("--renew", action="store_true")
     action.add_argument("--restore-http", action="store_true")
-    action.add_argument("--import-mirrors", type=Path)
     args = parser.parse_args()
     os.umask(0o077)
     if args.restore_http:
@@ -419,22 +366,19 @@ def main():
         with LOCK.open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             validate()
-            if args.import_mirrors:
-                import_mirrors(args.import_mirrors)
-                validate()
-            renew(dry_run=args.test_and_enable or bool(args.import_mirrors))
+            renew(dry_run=args.test_and_enable)
             deploy()
             deploy_mirrors()
-            if args.test_and_enable or args.import_mirrors:
+            if args.test_and_enable:
                 install()
             report = {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                       "lineages": list(LINEAGES),
                       "mirror_lineages": list(MIRRORS) if (
                           CONFIG / "renewal" / (MIRRORS[0] + ".conf")).exists() else [],
-                      "dry_run": args.test_and_enable or bool(args.import_mirrors),
-                      "source_timer_managed": False}
+                      "dry_run": args.test_and_enable,
+                      "renewal_owner": "beelink"}
             (STATE / "renewal-report.json").write_text(json.dumps(report, indent=2) + "\n")
-            log("Certificate renewal/deployment complete; source ownership unchanged.")
+            log("Beelink certificate renewal and mirror deployment complete.")
     except BaseException as error:
         try:
             notify(False, str(error))

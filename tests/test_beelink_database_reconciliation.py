@@ -95,7 +95,7 @@ CREATE VIEW `system_view` AS SELECT 1;
 
     def test_wrong_host_exits_before_mutation(self):
         with patch.object(DB.os, "getuid", return_value=0), \
-                patch.object(DB.socket, "gethostname", return_value="Latitude"), \
+                patch.object(DB.socket, "gethostname", return_value="other-host"), \
                 patch("sys.argv", ["reconcile", "--snapshots", "/unused"]):
             with self.assertRaisesRegex(RuntimeError, "directly on beelink"):
                 DB.main()

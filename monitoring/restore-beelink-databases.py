@@ -178,7 +178,7 @@ def restore(apache_mysql_image=None):
                                       for name in (*DATABASES, "apache-mysql", "native-mysql")):
             raise RuntimeError("Unmanaged database directories already exist; inspect before restoring")
         # Pin the source Docker MySQL image by its immutable ID. Load it from
-        # Latitude first if the exact image is not already present on beelink.
+        # Retrieve the original image only if the exact image is not already present.
         inventory = json.loads((SEED / "metadata/docker-inspect.json").read_text())
         apache = next(c for c in inventory if c["Name"] == "/apache-db-1")
         source_mysql = apache_mysql_image or apache["Image"]

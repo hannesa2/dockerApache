@@ -71,7 +71,7 @@ class BeelinkDatabaseRestoreTest(unittest.TestCase):
         self.assertEqual(RESTORE.postgres_table_count(listing), 2)
 
     def test_wrong_host_does_not_create_directories(self):
-        with patch.object(RESTORE.socket, "gethostname", return_value="latitude"), \
+        with patch.object(RESTORE.socket, "gethostname", return_value="other-host"), \
                 patch("sys.argv", ["restore", "--restore-isolated"]), \
                 patch.object(RESTORE.os, "listdir") as listdir:
             with self.assertRaisesRegex(RuntimeError, "directly on beelink"):

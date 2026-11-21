@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 
-SOURCE = Path(__file__).resolve().parents[1] / "owncloud/sync-latitude.sh"
+SOURCE = Path(__file__).resolve().parents[1] / "owncloud/sync-beelink.sh"
 
 
 class OwncloudEnvironmentTest(unittest.TestCase):
@@ -70,4 +70,4 @@ class OwncloudEnvironmentTest(unittest.TestCase):
         source = SOURCE.read_text()
         self.assertIn('"${BEELINK_PRODUCTION:-0}" == 1 && "$(hostname -s)" == beelink', source)
         self.assertNotIn("owncloud-staging", source)
-        self.assertNotIn("latitude-compose.yml", source)
+        self.assertNotIn("sync-latitude", source.lower())
