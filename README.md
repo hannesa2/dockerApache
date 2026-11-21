@@ -309,6 +309,109 @@ the independent mac2016 standby copies; mirror-only changes are overwritten by
 the next successful sync. See [`owncloud/README.md`](owncloud/README.md) and
 [`mxserver/README.md`](mxserver/README.md) for service checks and mirror details.
 
+### GitLab, Docker-Runner und mac2016 gemeinsam aktualisieren
+
+`monitoring/update-beelink-gitlab.py` aktualisiert die aktive Produktion auf
+beelink, den Docker-Runner und den GitLab-Standby auf mac2016. Es verwendet
+die produktiven Runtime-Dateien, nicht die frueheren Migrationsskripte:
+
+| Dienst | Aktive Konfiguration |
+|--------|----------------------|
+| GitLab auf beelink | `/daten/beelink-runtime/apps/compose.json` |
+| Docker-Runner | `/etc/beelink-docker-runner/compose.json` |
+| GitLab auf mac2016 | `/Users/hannes/git/dockerApache/gitlab/docker-compose.yml` |
+
+Direkt auf beelink im aktuellen Repository-Checkout ausfuehren. mac2016 muss
+eingeschaltet und ueber die vorhandenen SSH-Schluessel erreichbar sein.
+Beide GitLab-Instanzen muessen anfangs dieselbe CE-Version verwenden.
+Der Standby muss mit der oben genannten Compose-Datei ohne Overrides laufen;
+abweichende Dateien oder Daten-Mounts werden nicht automatisch umgeschrieben.
+Auf beiden Hosts muessen mindestens 50 GiB frei sein; fuer grosse Installationen
+zusaetzlich genug Platz fuer die GitLab-Archive und deren Sicherungskopien einplanen.
+Eine unabhaengige, getestete Off-Host-Sicherung bleibt erforderlich.
+
+Zuerst nur pruefen (die Versionsnummer ist ein **Beispiel**, kein automatisch
+ermitteltes Update-Ziel):
+
+```bash
+TARGET_VERSION=19.5.4  # Gewuenschte, verfuegbare Patch-Version einsetzen
+sudo python3 monitoring/update-beelink-gitlab.py --versions "$TARGET_VERSION"
+```
+
+Der Standardaufruf prueft Mount, laufende Versionen, Runner-Registrierung,
+GitLab-Zustand und Migrationen lokal sowie auf dem Standby. Er laedt keine
+Images und aendert keine Anwendungskonfiguration. Die Pruefung kann auf noch
+laufende Hintergrundmigrationen warten und bricht bei Fehlern ab.
+
+Vor der Ausfuehrung unter **GitLab Admin > CI/CD > Runners alle Runner pausieren**
+und laufende Jobs auslaufen lassen. Das Skript kontrolliert diesen Zustand,
+stoppt aber keine laufenden CI-Jobs gewaltsam. Dann denselben Aufruf freigeben:
+
+```bash
+sudo python3 monitoring/update-beelink-gitlab.py \
+  --versions "$TARGET_VERSION" --apply
+```
+
+Falls GitLab und Runner unterschiedliche Patch-Releases haben, die
+verfuegbare Runner-Version explizit mit `--runner-versions` angeben. Sie muss
+zur Major/Minor-Version von GitLab passen und darf kein Downgrade sein.
+Ohne diese Option wird fuer beide dieselbe Versionsnummer verwendet.
+
+**Minor-/Major-Upgrades:** Zuerst den
+[offiziellen Upgrade-Pfad](https://docs.gitlab.com/update/upgrade_paths/) und
+die Release-Hinweise pruefen. Alle erforderlichen Zwischenstopps mit ihren
+konkreten Patch-Versionen in aufsteigender Reihenfolge an `--versions` uebergeben
+und `--upgrade-path-reviewed` hinzufuegen. Bei `--runner-versions` muss dann
+genau eine Runner-Version pro Stopp angegeben werden. Das Skript ermittelt
+keinen Upgrade-Pfad, waehlt kein `latest` und bestaetigt mit diesem Schalter
+nicht selbst die Vollstaendigkeit des angegebenen Pfads.
+
+Bei `--apply` sperrt das Skript die gemeinsamen beelink-Lifecycle-Jobs und den
+mac2016-Backup-Empfaenger. Vor jedem GitLab-Schritt laedt es die benoetigten
+Images auf beiden Hosts, erstellt und verifiziert GitLab-Backups und sichert
+`/etc/gitlab` einschliesslich der Secrets sowie die bisherigen Compose-Dateien.
+Danach wird ausschliesslich der GitLab-Service neu erstellt; andere
+Anwendungen bleiben unveraendert. Readiness, Datenbank- und
+Hintergrundmigrationen sowie GitLab-/Secrets-Pruefungen muessen erfolgreich
+sein, bevor der naechste Schritt beginnt. Eine Migrationspruefung wartet
+hoechstens eine Stunde, die Readiness-Pruefung etwa 20 Minuten.
+Zum Schluss startet und verifiziert es den Runner und fuehrt den normalen
+GitLab-Mirror-Backup/Restore-Lauf aus. **Die Runner bleiben in GitLab pausiert**:
+anschliessend wieder freigeben und einen echten CI-Testjob ausfuehren.
+
+Backups werden nicht automatisch geloescht:
+
+```text
+beelink: /daten/beelink-backups/gitlab-updates/<UTC-Zeit>/<Zielversion>/
+mac2016: /Users/hannes/server/gitlab/backups/updates/<UTC-Zeit>/<Zielversion>/
+```
+
+`gitlab-backup.tar`, `backup-id` und `gitlab-configuration.tar` gehoeren
+zusammen und enthalten sensible Daten. Das Fortschritts-/Fehlerprotokoll liegt
+auf beelink unter `<UTC-Zeit>/update.log`; nach vollstaendigem Erfolg liegt
+dort auch `completed.json`. Der abschliessende Mirror-Lauf verwendet den
+vorhandenen Backup-Empfaenger und dessen normale Ausgabe.
+
+**Bei Fehlern kein automatischer Rollback und kein blindes Wiederholen.**
+`/daten/beelink-backups/gitlab-updates/update-in-progress.json` blockiert
+weitere Updates. Auf mac2016 kann ausserdem
+`/Users/hannes/.local/state/gitlab-mac-sync/lock/updater` verbleiben und den
+normalen Mirror-Lauf blockieren. Erst Log, tatsaechlich laufende Versionen,
+Migrationen und Backups pruefen; bei Bedarf die gesicherte Version **mit den
+dazugehoerigen Daten und Secrets** wiederherstellen. Ein altes Image allein
+ist nach einer Datenbankmigration kein Rollback. Sperren erst nach
+abgeschlossener manueller Wiederherstellung entfernen bzw. archivieren;
+es gibt keinen automatischen Resume-Modus. Bei einem Fehler nur im letzten
+Mirror-Lauf kann stattdessen dieser nach Beheben der Ursache separat ueber
+`sudo systemctl start beelink-job-gitlab.service` wiederholt werden. Den
+Pending-Marker danach erst bei nachgewiesenem Gesamterfolg archivieren.
+
+Die Runtime-Dateien bleiben fuer weitere Updates massgeblich. Historische
+Restore-/Migrationsskripte und der Runner-Erstinstaller sind bewusst auf
+ihren Ausgangsstand gepinnt und werden nicht als Updater erneut ausgefuehrt.
+Die Compose-Aenderung im Checkout auf mac2016 bleibt als lokale Aenderung
+sichtbar und sollte nach erfolgreichem Update ins Repository uebernommen werden.
+
 ### beelink: encrypted Samsung T7 at /daten
 
 The T7 contains beelink production data and is verified by its filesystem UUID
