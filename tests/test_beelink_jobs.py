@@ -1,10 +1,11 @@
 import importlib.util
+import io
 import json
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import datetime as dt
 
 
@@ -15,6 +16,13 @@ SPEC.loader.exec_module(JOBS)
 
 
 class BeelinkJobsTest(unittest.TestCase):
+    def job_process(self, status=0, output=""):
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.stdout = io.StringIO(output)
+        process.wait.return_value = status
+        return process
+
     def test_schedules_preserve_source_times_and_disable_catchup(self):
         definitions = JOBS.units()
         self.assertEqual(len(definitions), 16)
@@ -104,8 +112,8 @@ class BeelinkJobsTest(unittest.TestCase):
     def test_job_failure_is_recorded_and_mailed(self):
         with tempfile.TemporaryDirectory() as temporary:
             with patch.object(JOBS, "STATE", Path(temporary)), \
-                    patch.object(JOBS.subprocess, "run",
-                                 return_value=subprocess.CompletedProcess([], 1)), \
+                    patch.object(JOBS.subprocess, "Popen",
+                                 return_value=self.job_process(1)), \
                     patch.object(JOBS, "run") as mail:
                 with self.assertRaisesRegex(RuntimeError, "status 1"):
                     JOBS.notified_run("owncloud")
@@ -117,8 +125,8 @@ class BeelinkJobsTest(unittest.TestCase):
     def test_success_is_recorded_and_mailed_every_backup_run(self):
         with tempfile.TemporaryDirectory() as temporary:
             with patch.object(JOBS, "STATE", Path(temporary)), \
-                    patch.object(JOBS.subprocess, "run",
-                                 return_value=subprocess.CompletedProcess([], 0)), \
+                    patch.object(JOBS.subprocess, "Popen",
+                                 side_effect=lambda *args, **kwargs: self.job_process()), \
                     patch.object(JOBS, "run") as mail:
                 JOBS.notified_run("postgresql")
                 JOBS.notified_run("postgresql")
@@ -137,8 +145,8 @@ class BeelinkJobsTest(unittest.TestCase):
     def test_monitor_mails_initial_status_and_changes_only(self):
         with tempfile.TemporaryDirectory() as temporary:
             with patch.object(JOBS, "STATE", Path(temporary)), \
-                    patch.object(JOBS.subprocess, "run",
-                                 return_value=subprocess.CompletedProcess([], 0)), \
+                    patch.object(JOBS.subprocess, "Popen",
+                                 side_effect=lambda *args, **kwargs: self.job_process()), \
                     patch.object(JOBS, "run") as mail:
                 JOBS.notified_run("monitor")
                 JOBS.notified_run("monitor")
@@ -147,11 +155,25 @@ class BeelinkJobsTest(unittest.TestCase):
     def test_mail_failure_does_not_report_success(self):
         with tempfile.TemporaryDirectory() as temporary:
             with patch.object(JOBS, "STATE", Path(temporary)), \
-                    patch.object(JOBS.subprocess, "run",
-                                 return_value=subprocess.CompletedProcess([], 0)), \
+                    patch.object(JOBS.subprocess, "Popen",
+                                 return_value=self.job_process()), \
                     patch.object(JOBS, "run", side_effect=RuntimeError("mail unavailable")):
                 with self.assertRaisesRegex(RuntimeError, "mail unavailable"):
                     JOBS.notified_run("gitlab")
+
+    def test_job_output_is_streamed_once_and_included_in_mail(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(JOBS, "STATE", Path(temporary)), \
+                patch.object(JOBS.subprocess, "Popen",
+                             return_value=self.job_process(output="first\nsecond\n")) as popen, \
+                patch.object(JOBS, "run") as mail, \
+                patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            popen.return_value.wait.side_effect = lambda: (
+                self.assertEqual(stdout.getvalue(), "first\nsecond\n") or 0)
+            JOBS.notified_run("gitlab")
+            self.assertEqual(stdout.getvalue(), "first\nsecond\n")
+            self.assertIn("first\nsecond\n", mail.call_args.kwargs["input"])
+            self.assertEqual(popen.call_args.args[0][:2], ["python3", "-u"])
 
     def test_failed_preflight_does_not_install_timers(self):
         with patch.object(JOBS, "preflight", side_effect=RuntimeError("mirror missing")), \

@@ -388,11 +388,16 @@ def notified_run(job):
         try:
             with (STATE / (job + ".lock")).open("w") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                command = ["python3", str(Path(__file__).resolve()), "--execute", job]
-                result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT)
-                success = result.returncode == 0
+                command = ["python3", "-u", str(Path(__file__).resolve()), "--execute", job]
+                with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                      text=True, errors="replace", bufsize=1) as process:
+                    for line in process.stdout:
+                        print(line, end="", flush=True)
+                        output.write(line)
+                    returncode = process.wait()
+                success = returncode == 0
                 if not success:
-                    error = "Job exited with status " + str(result.returncode)
+                    error = "Job exited with status " + str(returncode)
         except Exception as failure:
             error = str(failure)
         finished = dt.datetime.now().astimezone().isoformat()
@@ -400,7 +405,6 @@ def notified_run(job):
                       started=started, finished=finished, error=error)
         output.seek(0)
         text = output.read()
-        print(text, end="", flush=True)
         temporary = status_path.with_suffix(".json.tmp")
         temporary.write_text(json.dumps(report, indent=2) + "\n")
         temporary.chmod(0o644)

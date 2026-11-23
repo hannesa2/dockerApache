@@ -25,6 +25,7 @@ PENDING = BACKUPS / "update-in-progress.json"
 CONTAINER = "beelink-apps-gitlab-1"
 MIRROR_COMPOSE = Path("/Users/hannes/git/dockerApache/gitlab/docker-compose.yml")
 MIRROR_LOCK = Path("/Users/hannes/.local/state/gitlab-mac-sync/lock")
+MIRROR_BACKUP_ROOT = "/gitlab-backup-archives/.sync"
 VERSION_FILE = "/opt/gitlab/embedded/service/gitlab-rails/VERSION"
 LOG = None
 
@@ -113,6 +114,11 @@ def dc(path, *args):
     return command("docker", "compose", "-f", path, *args)
 
 
+def mirror_dc(files, *args):
+    options = [item for path in files for item in ("-f", path)]
+    return command("docker", "compose", *options, *args)
+
+
 def execute(container, *args, timeout=3600, stdout=None):
     output = command("docker", "exec", container, *args, timeout=timeout, stdout=stdout)
     if stdout is None and output:
@@ -144,6 +150,22 @@ def check_gitlab(container, expected, wait=False):
     execute(container, "gitlab-rake", "gitlab:background_migrations:wait")
     execute(container, "gitlab-rake", "gitlab:check", "SANITIZE=true")
     execute(container, "gitlab-rake", "gitlab:doctor:secrets")
+
+
+def wait_runner(expected, timeout=120):
+    deadline = time.monotonic() + timeout
+    while True:
+        if command("systemctl", "is-active", "beelink-docker-runner.service") != "active":
+            raise RuntimeError("Runner service stopped while waiting for its container")
+        container = dc(RUNNER, "ps", "--status", "running", "-q", "runner")
+        if container:
+            actual = command("docker", "inspect", "--format", "{{.Config.Image}}", container)
+            if actual == image(expected, runner=True):
+                return
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Timed out waiting for runner container " + image(expected, runner=True))
+        log("Waiting for runner container " + image(expected, runner=True))
+        time.sleep(2)
 
 
 def backup(container, directory, backup_root="/var/opt/gitlab/backups"):
@@ -188,14 +210,58 @@ def remote(jobs, action, target, run_id):
         log(output)
 
 
+def mirror_files(details):
+    override = MIRROR_COMPOSE.with_name("docker-compose.override.yml")
+    labels = details["Config"].get("Labels") or {}
+    configured = labels.get("com.docker.compose.project.config_files")
+    allowed = ([MIRROR_COMPOSE], [MIRROR_COMPOSE, override])
+    for files in allowed:
+        if configured == ",".join(str(path) for path in files):
+            for path in files:
+                if path.is_symlink() or not path.is_file():
+                    raise RuntimeError("Standby Compose file missing or unsafe: " + str(path))
+            return files
+    raise RuntimeError("Unexpected standby Compose files")
+
+
+def mirror_config(files):
+    config = json.loads(mirror_dc(files, "config", "--format", "json"))
+    omnibus = config["services"]["gitlab"]["environment"]["GITLAB_OMNIBUS_CONFIG"]
+    paths = re.findall(
+        r"(?m)^\s*gitlab_rails\['backup_path'\]\s*=\s*['\"]([^'\"]+)['\"]\s*$",
+        omnibus)
+    if paths == [MIRROR_BACKUP_ROOT]:
+        return config, False
+    old = "gitlab_rails['backup_path'] = '/gitlab-backup-archives'"
+    if (paths == ["/gitlab-backup-archives"] and len(files) == 2
+            and files[1].read_text().count(old) == 1):
+        return config, True
+    raise RuntimeError("Unsupported standby GitLab backup path or override format")
+
+
+def normalize_mirror_override(path):
+    old = "gitlab_rails['backup_path'] = '/gitlab-backup-archives'"
+    new = "gitlab_rails['backup_path'] = '/gitlab-backup-archives/.sync'"
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError("Standby override is missing or unsafe")
+    text = path.read_text()
+    if text.count(old) != 1:
+        raise RuntimeError("Standby override changed; refusing to alter backup path")
+    temporary = path.with_name(path.name + ".update-tmp")
+    with temporary.open("x") as stream:
+        os.chmod(temporary, path.stat().st_mode & 0o777)
+        stream.write(text.replace(old, new))
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.replace(path)
+
+
 def mirror_check():
     if socket.gethostname().split(".")[0].lower() != "mac2016":
         raise RuntimeError("Standby worker must run on mac2016")
     details = json.loads(command("docker", "inspect", "gitlab16"))[0]
-    labels = details["Config"].get("Labels") or {}
-    if labels.get("com.docker.compose.project.config_files") != str(MIRROR_COMPOSE):
-        raise RuntimeError("Unexpected standby Compose files (overrides are not supported)")
-    config = json.loads(dc(MIRROR_COMPOSE, "config", "--format", "json"))
+    files = mirror_files(details)
+    config, _ = mirror_config(files)
     current = installed("gitlab16")
     if (config["services"]["gitlab"]["image"] != image(current)
             or details["Config"]["Image"] != image(current)
@@ -210,6 +276,9 @@ def mirror_check():
         raise RuntimeError("Unexpected standby bind mounts")
     if shutil.disk_usage(root).free < 50 * 1024**3:
         raise RuntimeError("Standby requires at least 50 GiB free")
+    execute("gitlab16", "gitlab-rails", "runner",
+            "abort('Unexpected standby backup path') unless "
+            f"Gitlab.config.backup.path.to_s.delete_suffix('/') == '{MIRROR_BACKUP_ROOT}'")
     return current
 
 
@@ -240,21 +309,23 @@ def mirror_worker(action, target, run_id):
     elif action == "pull":
         mirror_check()
         command("docker", "pull", image(target))
-    elif action == "backup":
+    elif action == "save-config":
         mirror_check()
+        files = mirror_files(json.loads(command("docker", "inspect", "gitlab16"))[0])
         directory = Path("/Users/hannes/server/gitlab/backups/updates") / run_id / target
-        workspace = "/gitlab-backup-archives/.sync"
-        execute("gitlab16", "test", "!", "-L", workspace)
-        execute("gitlab16", "install", "-d", "-o", "git", "-g", "git", "-m", "0700",
-                workspace)
-        if execute("gitlab16", "find", workspace, "-mindepth", "1", "-maxdepth", "1", "-print"):
-            raise RuntimeError("Standby backup workspace is not empty; inspect before retrying")
-        execute("gitlab16", "chmod", "0711", "/gitlab-backup-archives")
-        backup("gitlab16", directory, backup_root=workspace)
-        execute("gitlab16", "rmdir", "--", workspace)
-        shutil.copy2(MIRROR_COMPOSE, directory / "docker-compose.yml")
+        directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+        with (directory / "gitlab-configuration.tar").open("xb") as stream:
+            execute("gitlab16", "tar", "-cf", "-", "-C", "/etc", "gitlab", stdout=stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        for path in files:
+            shutil.copy2(path, directory / path.name)
+        log("Standby configuration retained at " + str(directory) +
+            "; standby data will be replaced by the final production sync")
     elif action == "update":
         mirror_check()
+        files = mirror_files(json.loads(command("docker", "inspect", "gitlab16"))[0])
+        config, normalize = mirror_config(files)
         text = MIRROR_COMPOSE.read_text()
         text, count = re.subn(
             r"(?m)^([ \t]*image:[ \t]*)gitlab/gitlab-ce:[0-9]+\.[0-9]+\.[0-9]+-ce\.0[ \t]*$",
@@ -265,10 +336,20 @@ def mirror_worker(action, target, run_id):
         with temporary.open("x") as stream:
             stream.write(text + ("" if text.endswith("\n") else "\n"))
         temporary.replace(MIRROR_COMPOSE)
-        if json.loads(dc(MIRROR_COMPOSE, "config", "--format", "json"))[
-                "services"]["gitlab"]["image"] != image(target):
-            raise RuntimeError("Standby Compose did not select the target image")
-        dc(MIRROR_COMPOSE, "up", "-d", "--no-deps", "--pull", "never", "gitlab")
+        if normalize:
+            normalize_mirror_override(files[1])
+            log("Standby override backup path normalized to " + MIRROR_BACKUP_ROOT)
+        updated, still_needs_normalization = mirror_config(files)
+        expected = config["services"]["gitlab"]["environment"]["GITLAB_OMNIBUS_CONFIG"]
+        if normalize:
+            expected = expected.replace(
+                "gitlab_rails['backup_path'] = '/gitlab-backup-archives'",
+                "gitlab_rails['backup_path'] = '/gitlab-backup-archives/.sync'")
+        if (updated["services"]["gitlab"]["image"] != image(target)
+                or still_needs_normalization
+                or updated["services"]["gitlab"]["environment"]["GITLAB_OMNIBUS_CONFIG"] != expected):
+            raise RuntimeError("Standby Compose image or GitLab configuration changed unexpectedly")
+        mirror_dc(files, "up", "-d", "--no-deps", "--pull", "never", "gitlab")
         check_gitlab("gitlab16", target, wait=True)
     else:
         raise RuntimeError("Unknown standby action")
@@ -315,7 +396,7 @@ def preflight(jobs, args):
 
 def require_paused_ci():
     execute(CONTAINER, "gitlab-rails", "runner", """
-abort('Pause ALL runners in GitLab before updating') if Ci::Runner.where(paused: false).exists?
+abort('Pause ALL runners in GitLab before updating') if Ci::Runner.active.exists?
 abort('Wait for running CI jobs to finish') if Ci::Build.where(status: %w[running preparing]).exists?
 puts 'All runners paused; no running CI jobs'
 """)
@@ -346,7 +427,7 @@ def update(jobs, args, current):
                 backup(CONTAINER, step)
                 shutil.copy2(APPS, step / "apps-compose.json")
                 shutil.copy2(RUNNER, step / "runner-compose.json")
-                remote(jobs, "backup", target, run_id)
+                remote(jobs, "save-config", target, run_id)
                 apps = json.loads(APPS.read_text())
                 apps["services"]["gitlab"]["image"] = image(target)
                 write_json(APPS, apps)
@@ -358,6 +439,7 @@ def update(jobs, args, current):
                 write_json(RUNNER, runner)
                 current = target
             command("systemctl", "start", "beelink-docker-runner.service")
+            wait_runner(args.runner_versions[-1])
             dc(RUNNER, "exec", "-T", "runner", "gitlab-runner", "verify")
             remote(jobs, "release", current, run_id)
             # The normal receiver must own the mirror lock during this restore.

@@ -371,11 +371,34 @@ die produktiven Runtime-Dateien, nicht die frueheren Migrationsskripte:
 Direkt auf beelink im aktuellen Repository-Checkout ausfuehren. mac2016 muss
 eingeschaltet und ueber die vorhandenen SSH-Schluessel erreichbar sein.
 Beide GitLab-Instanzen muessen anfangs dieselbe CE-Version verwenden.
-Der Standby muss mit der oben genannten Compose-Datei ohne Overrides laufen;
-abweichende Dateien oder Daten-Mounts werden nicht automatisch umgeschrieben.
+Der Standby muss mit der oben genannten Compose-Datei und optional der
+danebenliegenden `docker-compose.override.yml` laufen; andere Compose-Dateien
+oder abweichende Daten-Mounts werden nicht automatisch umgeschrieben.
+Die bisherige Override-Datei wird bei jedem Update-Schritt mitgesichert.
+Falls sie den Backuppfad `/gitlab-backup-archives` setzt, korrigiert der
+Updater diese eine Einstellung beim Update auf `/gitlab-backup-archives/.sync`,
+damit der bestehende Spiegel-Backup-Empfaenger nach einem Container-Neustart
+weiter funktioniert. Andere Einstellungen bleiben erhalten; unbekannte
+Backuppfade und nicht eindeutig aenderbare Overrides werden abgelehnt.
 Auf beiden Hosts muessen mindestens 50 GiB frei sein; fuer grosse Installationen
 zusaetzlich genug Platz fuer die GitLab-Archive und deren Sicherungskopien einplanen.
 Eine unabhaengige, getestete Off-Host-Sicherung bleibt erforderlich.
+
+Ein reiner Versionsvorschlag fuer die installierte GitLab-Hauptversion:
+
+```bash
+sudo python3 monitoring/suggest-beelink-gitlab-versions.py
+```
+
+Das Skript liest die laufenden beelink-Versionen, GitLabs veroeffentlichte
+Upgrade-Stopps und die aktiven Docker-Hub-Images fuer amd64 und arm64. Es
+zeigt `--versions` und `--runner-versions` an, fuehrt aber kein Update aus.
+Fuer eine Planung ohne Docker-Zugriff koennen beide Ausgangsversionen mit
+`--gitlab 19.5.3 --runner 19.5.3` angegeben werden. Waehrend eines laufenden
+Updates sind die automatisch gelesenen Versionen nur eine Momentaufnahme.
+Hauptversionswechsel, bedingte Stopps und versionsspezifische Hinweise
+erfordern weiterhin eine manuelle Pruefung des offiziellen Upgrade-Pfads.
+Der Vorschlag bestaetigt `--upgrade-path-reviewed` nicht automatisch.
 
 Zuerst nur pruefen (die Versionsnummer ist ein **Beispiel**, kein automatisch
 ermitteltes Update-Ziel):
@@ -415,8 +438,11 @@ nicht selbst die Vollstaendigkeit des angegebenen Pfads.
 
 Bei `--apply` sperrt das Skript die gemeinsamen beelink-Lifecycle-Jobs und den
 mac2016-Backup-Empfaenger. Vor jedem GitLab-Schritt laedt es die benoetigten
-Images auf beiden Hosts, erstellt und verifiziert GitLab-Backups und sichert
-`/etc/gitlab` einschliesslich der Secrets sowie die bisherigen Compose-Dateien.
+Images auf beiden Hosts, erstellt und verifiziert ein Produktions-GitLab-Backup
+und sichert auf beiden Hosts `/etc/gitlab` einschliesslich der Secrets sowie
+die bisherigen Compose-Dateien. Der Standby ist ueberschreibbar: Ein eigenes
+vollstaendiges Standby-Backup wird nicht erstellt; spiegelinterne Daten koennen
+bei Fehlern oder beim abschliessenden Spiegeln verloren gehen.
 Danach wird ausschliesslich der GitLab-Service neu erstellt; andere
 Anwendungen bleiben unveraendert. Readiness, Datenbank- und
 Hintergrundmigrationen sowie GitLab-/Secrets-Pruefungen muessen erfolgreich
@@ -433,11 +459,15 @@ beelink: /daten/beelink-backups/gitlab-updates/<UTC-Zeit>/<Zielversion>/
 mac2016: /Users/hannes/server/gitlab/backups/updates/<UTC-Zeit>/<Zielversion>/
 ```
 
-`gitlab-backup.tar`, `backup-id` und `gitlab-configuration.tar` gehoeren
-zusammen und enthalten sensible Daten. Das Fortschritts-/Fehlerprotokoll liegt
+Auf beelink gehoeren `gitlab-backup.tar`, `backup-id` und
+`gitlab-configuration.tar` zusammen. Auf mac2016 werden nur Konfiguration
+und Compose-Dateien gespeichert. Alle Sicherungen enthalten sensible Daten.
+Das Fortschritts-/Fehlerprotokoll liegt
 auf beelink unter `<UTC-Zeit>/update.log`; nach vollstaendigem Erfolg liegt
 dort auch `completed.json`. Der abschliessende Mirror-Lauf verwendet den
 vorhandenen Backup-Empfaenger und dessen normale Ausgabe.
+Die beelink-Jobs geben ihre Fortschrittsmeldungen waehrend des Laufs im
+systemd-Journal aus; die Mail enthaelt weiterhin das Ende der Ausgabe.
 
 **Bei Fehlern kein automatischer Rollback und kein blindes Wiederholen.**
 `/daten/beelink-backups/gitlab-updates/update-in-progress.json` blockiert
