@@ -1,3 +1,26 @@
+## Backup-HDD auf beelink
+
+Die vorhandene verschlüsselte WD-Festplatte wird über einen Schlüssel auf dem
+verschlüsselten Systemlaufwerk bei Zugriff unter `/datenBackup` eingebunden.
+`nofail` und systemd-Automount sollen den Boot auch ohne HDD ermöglichen; der
+Fall ohne Platte und das automatische Entsperren nach Neustart sind noch nicht
+praktisch geprüft. Schlüssel und LUKS-Header-Backups müssen getrennt und sicher
+außerhalb von beelink aufbewahrt werden.
+
+Der Dienst `beelink-backup-disk-idle.service` überwacht ausschließlich die
+WD-HDD anhand ihrer Seriennummer und sendet nach mindestens 300 Sekunden ohne
+I/O einen SCSI-Standby-Befehl über den geprüften offenen Geräte-Handle. Er
+überwacht die physischen I/O-Zähler; anhaltende Zugriffe können die Abschaltung
+verzögern. `hd-idle.service` bleibt maskiert, damit es keine anderen Laufwerke
+anhand eines wiederverwendeten Gerätenamens abschaltet. Ein akzeptierter
+Standby-Befehl belegt nicht, dass die USB-HDD tatsächlich stillsteht;
+physisches Abschalten und Aufwachen müssen separat überprüft werden.
+
+```bash
+systemctl status beelink-backup-disk-idle.service --no-pager
+journalctl -u beelink-backup-disk-idle.service --no-pager -n 50
+```
+
 ## macOS mit OrbStack
 
 OrbStack stellt die Docker-kompatible CLI bereit. Die bestehenden Compose-Dateien
@@ -275,12 +298,34 @@ Certificate renewal and deployment are managed on beelink by
 `monitoring/renew-beelink-certificates.py` and the
 `beelink-certificates.timer`. The renewal job deploys active certificates to
 the local frontend and DNS services, then transfers mirror certificates to
-mac2016. Check the timer and recent logs with:
+mac2016. The timer definition schedules renewal daily at 02:48; the encrypted
+configuration backup is scheduled on Sundays at 02:55. These schedules require
+mac2016 to be awake and reachable and take effect only after the installed
+systemd timers have been updated. Check the timer and recent logs with:
 
 ```bash
 systemctl status beelink-certificates.timer --no-pager
 sudo journalctl -u beelink-certificates.service -n 100 --no-pager
 ```
+
+For the mac2016 nightly standby window, `monitoring/mac2016-night-wake.py`
+installs a user LaunchAgent that starts an indefinite Amphetamine session with
+closed-display mode at 02:44. The separate `pmset` wake schedule and a logged-in
+GUI session are required. The beelink job timer checks every five minutes from
+04:50 through 23:55 and requests sleep only after today's Apache, GitLab,
+ownCloud, MXServer, Matomo, certificate renewal and Home Assistant snapshot all
+succeed; the Sunday check also requires the encrypted configuration backup.
+The sleep request is held if any required work fails or is still running.
+A detected wake/start failure is logged to `~/Library/Logs/mac2016-night-wake.log`
+and triggers a failure email. After a reboot, the GUI user must log in again.
+The beelink hourly monitor accepts mac2016 being offline only after a successful
+post-jobs sleep request has been recorded.
+Install the beelink side from its staged repository checkout with
+`sudo python3 monitoring/install-mac2016-night-schedule.py`. It reloads systemd
+unit definitions without restarting services, restarts only the three affected
+timers, and enables the guarded sleep-check timer. Because the certificate timer
+and Sunday backup timer are persistent, an already-missed occurrence may run
+immediately after installation.
 
 The job schedules and read-only health/status commands are defined in
 `monitoring/beelink-jobs.py`. On beelink, inspect the last results with:

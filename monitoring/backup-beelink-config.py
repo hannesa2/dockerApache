@@ -226,10 +226,10 @@ Type=oneshot
 ExecStart=/usr/bin/python3 {INSTALLED}/backup-beelink-config.py --notify-failure
 """,
         NAME + ".timer": f"""[Unit]
-Description=Back up beelink configuration weekly
+Description=Back up beelink configuration on Sundays at 02:55
 
 [Timer]
-OnCalendar=Sun *-*-* 02:15:00
+OnCalendar=Sun *-*-* 02:55:00
 Persistent=true
 Unit={NAME}.service
 

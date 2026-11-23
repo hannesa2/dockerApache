@@ -34,6 +34,9 @@ SSH_OPTIONS = [
     "-o", "UserKnownHostsFile=/home/hannes/.ssh/known_hosts",
 ]
 MIRROR = "hannes@192.168.178.70"
+SLEEP_REQUEST = STATE / "mac2016-sleep-requested.json"
+LIFECYCLE_LOCK = Path("/run/lock/beelink-staging-control.lock")
+NIGHT_JOBS = ("apache", "gitlab", "owncloud", "mxserver", "matomo")
 PG = ("beelink-databases-mxserver-1", "beelink-databases-owncloud-1",
       "camera-postgres-db-1")
 
@@ -70,6 +73,79 @@ def environment():
             "POSTGRES_BACKUP_ROOT": "/daten/beelink-backups/postgresql",
             "POSTGRES_OWNCLOUD_CONTAINER": PG[1], "POSTGRES_OWNCLOUD_USER": "beelink_restore",
             "MATOMO_SOURCE_DIR": str(RUNTIME / "matomo/www/piwik")}
+
+
+def sleep_requested_today(now=None):
+    now = now or dt.datetime.now().astimezone()
+    try:
+        request = json.loads(SLEEP_REQUEST.read_text())
+        return dt.datetime.fromisoformat(request["requested_at"]).astimezone().date() == now.date()
+    except (OSError, KeyError, TypeError, ValueError):
+        return False
+
+
+def systemd_succeeded_today(unit, today):
+    result = capture("systemctl", "show", unit, "-p", "Result", "--value")
+    finished = capture("systemctl", "show", unit, "-p", "ExecMainExitTimestamp", "--value")
+    return result == "success" and len(finished.split()) >= 2 \
+        and finished.split()[1] == today.isoformat()
+
+
+def sleep_readiness(now=None):
+    now = now or dt.datetime.now().astimezone()
+    today = now.date()
+    reasons = []
+    for job in NIGHT_JOBS:
+        path = STATE / (job + ".json")
+        try:
+            report = json.loads(path.read_text())
+            finished = dt.datetime.fromisoformat(report["finished"]).astimezone()
+            if report["result"] != "SUCCESS" or finished.date() != today:
+                reasons.append(job + " has not succeeded today")
+        except (OSError, KeyError, TypeError, ValueError):
+            reasons.append(job + " has no valid success report for today")
+    if not systemd_succeeded_today("beelink-certificates.service", today):
+        reasons.append("certificate renewal has not succeeded today")
+    if today.weekday() == 6 and not systemd_succeeded_today(
+            "beelink-config-backup.service", today):
+        reasons.append("weekly encrypted configuration backup has not succeeded today")
+    for unit in (
+            *(f"beelink-job-{job}.service" for job in NIGHT_JOBS),
+            "beelink-certificates.service", "beelink-config-backup.service"):
+        if subprocess.run(["systemctl", "is-active", "--quiet", unit]).returncode == 0:
+            reasons.append(unit + " is still running")
+    try:
+        remote("/usr/bin/python3 /Users/hannes/bin/mac2016-night-wake.py --check-standby")
+    except subprocess.CalledProcessError:
+        reasons.append("today's Home Assistant standby snapshot is not verified")
+    return reasons
+
+
+def sleep_check():
+    if os.getuid() != 0 or socket.gethostname().split(".")[0].lower() != "beelink":
+        raise RuntimeError("Run as root directly on beelink")
+    guard()
+    if sleep_requested_today():
+        print("mac2016 sleep was already requested today.", flush=True)
+        return
+    with LIFECYCLE_LOCK.open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("Keeping mac2016 awake; a lifecycle operation holds the lock.", flush=True)
+            return
+        reasons = sleep_readiness()
+        if reasons:
+            print("Keeping mac2016 awake; " + "; ".join(reasons), flush=True)
+            return
+        remote("/usr/bin/python3 /Users/hannes/bin/mac2016-night-wake.py --sleep")
+        report = {"requested_at": dt.datetime.now().astimezone().isoformat(),
+                  "reason": "all scheduled mirror, certificate, backup and snapshot checks passed"}
+        temporary = SLEEP_REQUEST.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(report, indent=2) + "\n")
+        temporary.chmod(0o644)
+        temporary.replace(SLEEP_REQUEST)
+    print("mac2016 sleep requested after all scheduled jobs succeeded.", flush=True)
 
 
 def local_health():
@@ -287,7 +363,15 @@ def execute(job):
                    "apache-owncloud-db-1 apache-mxserver-1 apache-mxserver-db-1 gitlab16; do "
                    'test "$(docker inspect -f \'{{.State.Running}}\' "$c")" = true; done')
         except subprocess.CalledProcessError:
-            failures.append("mac2016 SSH/Docker/standby application unavailable")
+            if sleep_requested_today():
+                try:
+                    remote("true")
+                except subprocess.CalledProcessError:
+                    print("mac2016 is in its verified post-jobs sleep window.", flush=True)
+                else:
+                    failures.append("mac2016 is reachable but its Docker standby services are unavailable")
+            else:
+                failures.append("mac2016 SSH/Docker/standby application unavailable")
         if failures:
             raise RuntimeError("\n".join(failures))
         print("beelink and mac2016 services, TLS and job freshness checked.", flush=True)
@@ -351,6 +435,30 @@ Description=Schedule {title} from beelink
 OnCalendar=*-*-* {schedule}
 Persistent=false
 Unit={name}.service
+
+[Install]
+WantedBy=timers.target
+"""
+    checks = []
+    for minute in range(4 * 60 + 50, 24 * 60, 5):
+        checks.append(f"OnCalendar=*-*-* {minute // 60:02}:{minute % 60:02}:00")
+    result["beelink-job-mac2016-sleep.service"] = f"""[Unit]
+Description=Sleep mac2016 only after all nightly jobs succeed
+After=network-online.target docker.service beelink-production.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/bin/python3 {INSTALLED}/beelink-jobs.py --sleep-check
+TimeoutStartSec=2min
+"""
+    result["beelink-job-mac2016-sleep.timer"] = """[Unit]
+Description=Check whether nightly mac2016 work is complete
+
+[Timer]
+""" + "\n".join(checks) + """
+Persistent=false
+Unit=beelink-job-mac2016-sleep.service
 
 [Install]
 WantedBy=timers.target
@@ -419,6 +527,7 @@ def main():
     action.add_argument("--preflight", action="store_true")
     action.add_argument("--run", choices=JOBS)
     action.add_argument("--execute", choices=JOBS)
+    action.add_argument("--sleep-check", action="store_true")
     action.add_argument("--health-json", action="store_true")
     action.add_argument("--report", action="store_true")
     args = parser.parse_args()
@@ -435,6 +544,9 @@ def main():
     if args.health_json:
         failures = local_health()
         print(json.dumps({"host": socket.gethostname(), "failures": failures}))
+        return
+    if args.sleep_check:
+        sleep_check()
         return
     if args.run:
         # Notification wrapper also runs when the mounted production disk is missing.
