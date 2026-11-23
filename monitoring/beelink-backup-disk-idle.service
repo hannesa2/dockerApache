@@ -1,0 +1,12 @@
+[Unit]
+Description=Spin down the verified beelink backup HDD after five minutes
+After=systemd-udevd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -u /usr/local/libexec/beelink-backup-disk-idle.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -56,7 +56,8 @@ class BeelinkConfigBackupTest(unittest.TestCase):
         self.assertIn("OnFailure=beelink-config-backup-failure.service", service)
         self.assertIn("/usr/bin/flock -w 14400 /run/lock/beelink-staging-control.lock", service)
         self.assertIn("--backup-and-verify", service)
-        self.assertIn("OnCalendar=Sun *-*-* 02:15:00", timer)
+        self.assertIn("OnCalendar=Sun *-*-* 02:55:00", timer)
+        self.assertIn("Description=Back up beelink configuration on Sundays at 02:55", timer)
         self.assertIn("Persistent=true", timer)
         self.assertIn("--notify-failure", definitions["beelink-config-backup-failure.service"])
 

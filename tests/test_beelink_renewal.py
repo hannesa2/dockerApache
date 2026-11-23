@@ -114,7 +114,8 @@ class BeelinkRenewalTest(unittest.TestCase):
         self.assertIn("--restore-http", service)
         self.assertNotIn("Requires=beelink-production.service", service)
         self.assertIn("Persistent=true", timer)
-        self.assertIn("OnCalendar=*-*-* 00,12:00:00", timer)
+        self.assertIn("OnCalendar=*-*-* 02:48:00", timer)
+        self.assertNotIn("RandomizedDelaySec=", timer)
 
     def test_enable_requires_successful_acme_and_deployment(self):
         with tempfile.TemporaryDirectory() as temporary:

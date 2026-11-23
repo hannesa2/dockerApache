@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+import datetime as dt
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -16,7 +17,7 @@ SPEC.loader.exec_module(JOBS)
 class BeelinkJobsTest(unittest.TestCase):
     def test_schedules_preserve_source_times_and_disable_catchup(self):
         definitions = JOBS.units()
-        self.assertEqual(len(definitions), 14)
+        self.assertEqual(len(definitions), 16)
         expected = {"postgresql": "19:15:00", "apache": "03:05:00",
                     "gitlab": "03:15:00", "owncloud": "04:00:00",
                     "mxserver": "04:30:00", "matomo": "04:45:00", "monitor": "*:00:00"}
@@ -27,6 +28,71 @@ class BeelinkJobsTest(unittest.TestCase):
             self.assertNotIn("Requires=beelink-databases", service)
             self.assertIn(f"OnCalendar=*-*-* {time}", timer)
             self.assertIn("Persistent=false", timer)
+        sleep_timer = definitions["beelink-job-mac2016-sleep.timer"]
+        self.assertIn("OnCalendar=*-*-* 04:50:00", sleep_timer)
+        self.assertIn("OnCalendar=*-*-* 23:55:00", sleep_timer)
+        self.assertIn("Unit=beelink-job-mac2016-sleep.service", sleep_timer)
+        self.assertIn("--sleep-check", definitions["beelink-job-mac2016-sleep.service"])
+
+    def test_sleep_is_only_requested_after_readiness_checks_pass(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(JOBS, "STATE", Path(temporary)), \
+                patch.object(JOBS, "SLEEP_REQUEST", Path(temporary) / "sleep.json"), \
+                patch.object(JOBS, "LIFECYCLE_LOCK", Path(temporary) / "lifecycle.lock"), \
+                patch.object(JOBS, "guard") as guard, \
+                patch.object(JOBS, "sleep_readiness", return_value=["gitlab failed"]), \
+                patch.object(JOBS.os, "getuid", return_value=0), \
+                patch.object(JOBS.socket, "gethostname", return_value="beelink"), \
+                patch.object(JOBS, "remote") as remote:
+            JOBS.sleep_check()
+            guard.assert_called_once()
+            remote.assert_not_called()
+
+    def test_successful_sleep_request_is_recorded_for_health_monitor(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(JOBS, "STATE", Path(temporary)), \
+                patch.object(JOBS, "SLEEP_REQUEST", Path(temporary) / "sleep.json"), \
+                patch.object(JOBS, "LIFECYCLE_LOCK", Path(temporary) / "lifecycle.lock"), \
+                patch.object(JOBS, "guard"), \
+                patch.object(JOBS, "sleep_readiness", return_value=[]), \
+                patch.object(JOBS.os, "getuid", return_value=0), \
+                patch.object(JOBS.socket, "gethostname", return_value="beelink"), \
+                patch.object(JOBS, "remote") as remote:
+            JOBS.sleep_check()
+            remote.assert_called_once()
+            self.assertTrue(JOBS.sleep_requested_today())
+
+    def test_sleep_requires_all_jobs_and_standby_checks_today(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(JOBS, "STATE", Path(temporary)), \
+                patch.object(JOBS, "systemd_succeeded_today", return_value=True), \
+                patch.object(JOBS.subprocess, "run",
+                             return_value=subprocess.CompletedProcess([], 1)), \
+                patch.object(JOBS, "remote") as remote:
+            now = dt.datetime(2026, 11, 22, 5, tzinfo=dt.timezone.utc).astimezone()
+            for job in JOBS.NIGHT_JOBS:
+                report = {"result": "SUCCESS", "finished": now.isoformat()}
+                (Path(temporary) / f"{job}.json").write_text(json.dumps(report))
+            self.assertEqual(JOBS.sleep_readiness(now), [])
+            remote.assert_called_once()
+            (Path(temporary) / "matomo.json").write_text(
+                json.dumps({"result": "FAILED", "finished": now.isoformat()}))
+            self.assertIn("matomo has not succeeded today", JOBS.sleep_readiness(now))
+
+    def test_health_monitor_accepts_only_recorded_sleep_as_expected_offline(self):
+        with patch.object(JOBS, "local_health", return_value=[]), \
+                patch.object(JOBS, "remote", side_effect=subprocess.CalledProcessError(255, "ssh")), \
+                patch.object(JOBS, "sleep_requested_today", return_value=True):
+            JOBS.execute("monitor")
+
+    def test_sleeping_mac_does_not_hide_reachable_docker_failure(self):
+        with patch.object(JOBS, "local_health", return_value=[]), \
+                patch.object(JOBS, "remote", side_effect=[
+                    subprocess.CalledProcessError(1, "docker"),
+                    subprocess.CompletedProcess([], 0)]), \
+                patch.object(JOBS, "sleep_requested_today", return_value=True):
+            with self.assertRaisesRegex(RuntimeError, "Docker standby services"):
+                JOBS.execute("monitor")
 
     def test_docker_sources_replace_frozen_native_sources(self):
         environment = JOBS.environment()

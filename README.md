@@ -1,3 +1,26 @@
+## Backup-HDD auf beelink
+
+Die vorhandene verschlüsselte WD-Festplatte wird über einen Schlüssel auf dem
+verschlüsselten Systemlaufwerk bei Zugriff unter `/datenBackup` eingebunden.
+`nofail` und systemd-Automount sollen den Boot auch ohne HDD ermöglichen; der
+Fall ohne Platte und das automatische Entsperren nach Neustart sind noch nicht
+praktisch geprüft. Schlüssel und LUKS-Header-Backups müssen getrennt und sicher
+außerhalb von beelink aufbewahrt werden.
+
+Der Dienst `beelink-backup-disk-idle.service` überwacht ausschließlich die
+WD-HDD anhand ihrer Seriennummer und sendet nach mindestens 300 Sekunden ohne
+I/O einen SCSI-Standby-Befehl über den geprüften offenen Geräte-Handle. Er
+überwacht die physischen I/O-Zähler; anhaltende Zugriffe können die Abschaltung
+verzögern. `hd-idle.service` bleibt maskiert, damit es keine anderen Laufwerke
+anhand eines wiederverwendeten Gerätenamens abschaltet. Ein akzeptierter
+Standby-Befehl belegt nicht, dass die USB-HDD tatsächlich stillsteht;
+physisches Abschalten und Aufwachen müssen separat überprüft werden.
+
+```bash
+systemctl status beelink-backup-disk-idle.service --no-pager
+journalctl -u beelink-backup-disk-idle.service --no-pager -n 50
+```
+
 ## macOS mit OrbStack
 
 OrbStack stellt die Docker-kompatible CLI bereit. Die bestehenden Compose-Dateien
@@ -275,12 +298,34 @@ Certificate renewal and deployment are managed on beelink by
 `monitoring/renew-beelink-certificates.py` and the
 `beelink-certificates.timer`. The renewal job deploys active certificates to
 the local frontend and DNS services, then transfers mirror certificates to
-mac2016. Check the timer and recent logs with:
+mac2016. The timer definition schedules renewal daily at 02:48; the encrypted
+configuration backup is scheduled on Sundays at 02:55. These schedules require
+mac2016 to be awake and reachable and take effect only after the installed
+systemd timers have been updated. Check the timer and recent logs with:
 
 ```bash
 systemctl status beelink-certificates.timer --no-pager
 sudo journalctl -u beelink-certificates.service -n 100 --no-pager
 ```
+
+For the mac2016 nightly standby window, `monitoring/mac2016-night-wake.py`
+installs a user LaunchAgent that starts an indefinite Amphetamine session with
+closed-display mode at 02:44. The separate `pmset` wake schedule and a logged-in
+GUI session are required. The beelink job timer checks every five minutes from
+04:50 through 23:55 and requests sleep only after today's Apache, GitLab,
+ownCloud, MXServer, Matomo, certificate renewal and Home Assistant snapshot all
+succeed; the Sunday check also requires the encrypted configuration backup.
+The sleep request is held if any required work fails or is still running.
+A detected wake/start failure is logged to `~/Library/Logs/mac2016-night-wake.log`
+and triggers a failure email. After a reboot, the GUI user must log in again.
+The beelink hourly monitor accepts mac2016 being offline only after a successful
+post-jobs sleep request has been recorded.
+Install the beelink side from its staged repository checkout with
+`sudo python3 monitoring/install-mac2016-night-schedule.py`. It reloads systemd
+unit definitions without restarting services, restarts only the three affected
+timers, and enables the guarded sleep-check timer. Because the certificate timer
+and Sunday backup timer are persistent, an already-missed occurrence may run
+immediately after installation.
 
 The job schedules and read-only health/status commands are defined in
 `monitoring/beelink-jobs.py`. On beelink, inspect the last results with:
@@ -308,6 +353,109 @@ Production ownCloud and MXServer run on beelink. Their systemd jobs synchronize
 the independent mac2016 standby copies; mirror-only changes are overwritten by
 the next successful sync. See [`owncloud/README.md`](owncloud/README.md) and
 [`mxserver/README.md`](mxserver/README.md) for service checks and mirror details.
+
+### GitLab, Docker-Runner und mac2016 gemeinsam aktualisieren
+
+`monitoring/update-beelink-gitlab.py` aktualisiert die aktive Produktion auf
+beelink, den Docker-Runner und den GitLab-Standby auf mac2016. Es verwendet
+die produktiven Runtime-Dateien, nicht die frueheren Migrationsskripte:
+
+| Dienst | Aktive Konfiguration |
+|--------|----------------------|
+| GitLab auf beelink | `/daten/beelink-runtime/apps/compose.json` |
+| Docker-Runner | `/etc/beelink-docker-runner/compose.json` |
+| GitLab auf mac2016 | `/Users/hannes/git/dockerApache/gitlab/docker-compose.yml` |
+
+Direkt auf beelink im aktuellen Repository-Checkout ausfuehren. mac2016 muss
+eingeschaltet und ueber die vorhandenen SSH-Schluessel erreichbar sein.
+Beide GitLab-Instanzen muessen anfangs dieselbe CE-Version verwenden.
+Der Standby muss mit der oben genannten Compose-Datei ohne Overrides laufen;
+abweichende Dateien oder Daten-Mounts werden nicht automatisch umgeschrieben.
+Auf beiden Hosts muessen mindestens 50 GiB frei sein; fuer grosse Installationen
+zusaetzlich genug Platz fuer die GitLab-Archive und deren Sicherungskopien einplanen.
+Eine unabhaengige, getestete Off-Host-Sicherung bleibt erforderlich.
+
+Zuerst nur pruefen (die Versionsnummer ist ein **Beispiel**, kein automatisch
+ermitteltes Update-Ziel):
+
+```bash
+TARGET_VERSION=19.5.4  # Gewuenschte, verfuegbare Patch-Version einsetzen
+sudo python3 monitoring/update-beelink-gitlab.py --versions "$TARGET_VERSION"
+```
+
+Der Standardaufruf prueft Mount, laufende Versionen, Runner-Registrierung,
+GitLab-Zustand und Migrationen lokal sowie auf dem Standby. Er laedt keine
+Images und aendert keine Anwendungskonfiguration. Die Pruefung kann auf noch
+laufende Hintergrundmigrationen warten und bricht bei Fehlern ab.
+
+Vor der Ausfuehrung unter **GitLab Admin > CI/CD > Runners alle Runner pausieren**
+und laufende Jobs auslaufen lassen. Das Skript kontrolliert diesen Zustand,
+stoppt aber keine laufenden CI-Jobs gewaltsam. Dann denselben Aufruf freigeben:
+
+```bash
+sudo python3 monitoring/update-beelink-gitlab.py \
+  --versions "$TARGET_VERSION" --apply
+```
+
+Falls GitLab und Runner unterschiedliche Patch-Releases haben, die
+verfuegbare Runner-Version explizit mit `--runner-versions` angeben. Sie muss
+zur Major/Minor-Version von GitLab passen und darf kein Downgrade sein.
+Ohne diese Option wird fuer beide dieselbe Versionsnummer verwendet.
+
+**Minor-/Major-Upgrades:** Zuerst den
+[offiziellen Upgrade-Pfad](https://docs.gitlab.com/update/upgrade_paths/) und
+die Release-Hinweise pruefen. Alle erforderlichen Zwischenstopps mit ihren
+konkreten Patch-Versionen in aufsteigender Reihenfolge an `--versions` uebergeben
+und `--upgrade-path-reviewed` hinzufuegen. Bei `--runner-versions` muss dann
+genau eine Runner-Version pro Stopp angegeben werden. Das Skript ermittelt
+keinen Upgrade-Pfad, waehlt kein `latest` und bestaetigt mit diesem Schalter
+nicht selbst die Vollstaendigkeit des angegebenen Pfads.
+
+Bei `--apply` sperrt das Skript die gemeinsamen beelink-Lifecycle-Jobs und den
+mac2016-Backup-Empfaenger. Vor jedem GitLab-Schritt laedt es die benoetigten
+Images auf beiden Hosts, erstellt und verifiziert GitLab-Backups und sichert
+`/etc/gitlab` einschliesslich der Secrets sowie die bisherigen Compose-Dateien.
+Danach wird ausschliesslich der GitLab-Service neu erstellt; andere
+Anwendungen bleiben unveraendert. Readiness, Datenbank- und
+Hintergrundmigrationen sowie GitLab-/Secrets-Pruefungen muessen erfolgreich
+sein, bevor der naechste Schritt beginnt. Eine Migrationspruefung wartet
+hoechstens eine Stunde, die Readiness-Pruefung etwa 20 Minuten.
+Zum Schluss startet und verifiziert es den Runner und fuehrt den normalen
+GitLab-Mirror-Backup/Restore-Lauf aus. **Die Runner bleiben in GitLab pausiert**:
+anschliessend wieder freigeben und einen echten CI-Testjob ausfuehren.
+
+Backups werden nicht automatisch geloescht:
+
+```text
+beelink: /daten/beelink-backups/gitlab-updates/<UTC-Zeit>/<Zielversion>/
+mac2016: /Users/hannes/server/gitlab/backups/updates/<UTC-Zeit>/<Zielversion>/
+```
+
+`gitlab-backup.tar`, `backup-id` und `gitlab-configuration.tar` gehoeren
+zusammen und enthalten sensible Daten. Das Fortschritts-/Fehlerprotokoll liegt
+auf beelink unter `<UTC-Zeit>/update.log`; nach vollstaendigem Erfolg liegt
+dort auch `completed.json`. Der abschliessende Mirror-Lauf verwendet den
+vorhandenen Backup-Empfaenger und dessen normale Ausgabe.
+
+**Bei Fehlern kein automatischer Rollback und kein blindes Wiederholen.**
+`/daten/beelink-backups/gitlab-updates/update-in-progress.json` blockiert
+weitere Updates. Auf mac2016 kann ausserdem
+`/Users/hannes/.local/state/gitlab-mac-sync/lock/updater` verbleiben und den
+normalen Mirror-Lauf blockieren. Erst Log, tatsaechlich laufende Versionen,
+Migrationen und Backups pruefen; bei Bedarf die gesicherte Version **mit den
+dazugehoerigen Daten und Secrets** wiederherstellen. Ein altes Image allein
+ist nach einer Datenbankmigration kein Rollback. Sperren erst nach
+abgeschlossener manueller Wiederherstellung entfernen bzw. archivieren;
+es gibt keinen automatischen Resume-Modus. Bei einem Fehler nur im letzten
+Mirror-Lauf kann stattdessen dieser nach Beheben der Ursache separat ueber
+`sudo systemctl start beelink-job-gitlab.service` wiederholt werden. Den
+Pending-Marker danach erst bei nachgewiesenem Gesamterfolg archivieren.
+
+Die Runtime-Dateien bleiben fuer weitere Updates massgeblich. Historische
+Restore-/Migrationsskripte und der Runner-Erstinstaller sind bewusst auf
+ihren Ausgangsstand gepinnt und werden nicht als Updater erneut ausgefuehrt.
+Die Compose-Aenderung im Checkout auf mac2016 bleibt als lokale Aenderung
+sichtbar und sollte nach erfolgreichem Update ins Repository uebernommen werden.
 
 ### beelink: encrypted Samsung T7 at /daten
 

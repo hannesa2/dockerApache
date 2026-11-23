@@ -307,11 +307,10 @@ TimeoutStartSec=30min
 TimeoutStopSec=60
 """,
         NAME + ".timer": f"""[Unit]
-Description=Check beelink TLS renewal twice daily
+Description=Check beelink TLS renewal daily
 
 [Timer]
-OnCalendar=*-*-* 00,12:00:00
-RandomizedDelaySec=1h
+OnCalendar=*-*-* 02:48:00
 Persistent=true
 Unit={NAME}.service
 
