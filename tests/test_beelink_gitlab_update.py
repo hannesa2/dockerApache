@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -106,43 +107,145 @@ class GitlabUpdateTest(unittest.TestCase):
             with patch.object(UPDATE, "MIRROR_LOCK", lock), \
                     patch.object(UPDATE, "MIRROR_COMPOSE", compose), \
                     patch.object(UPDATE, "mirror_check", return_value="19.5.3"), \
-                    patch.object(UPDATE, "dc", return_value=json.dumps({
-                        "services": {"gitlab": {"image": UPDATE.image("19.5.4")}}})) as dc, \
+                    patch.object(UPDATE, "command", return_value='[{}]'), \
+                    patch.object(UPDATE, "mirror_files", return_value=[compose]), \
+                    patch.object(UPDATE, "mirror_config", return_value=(
+                        {"services": {"gitlab": {"image": UPDATE.image("19.5.4"),
+                         "environment": {"GITLAB_OMNIBUS_CONFIG": "unchanged"}}}},
+                        False)), \
+                    patch.object(UPDATE, "mirror_dc") as dc, \
                     patch.object(UPDATE, "check_gitlab") as check:
                 UPDATE.mirror_worker("update", "19.5.4", "20261121T080000Z")
             self.assertEqual(compose.read_text(), before.replace("19.5.3", "19.5.4"))
-            dc.assert_any_call(compose, "up", "-d", "--no-deps", "--pull", "never", "gitlab")
+            dc.assert_any_call([compose], "up", "-d", "--no-deps", "--pull", "never", "gitlab")
             check.assert_called_once_with("gitlab16", "19.5.4", wait=True)
             self.assertTrue(lock.is_dir())
 
-    def test_mirror_backup_prepares_git_owned_workspace_and_refuses_leftovers(self):
-        for contents in ("", "leftover_archive.tar"):
-            with self.subTest(contents=contents), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                lock = root / "lock"
-                lock.mkdir()
-                (lock / "updater").write_text("20261121T080000Z")
-                with patch.object(UPDATE, "MIRROR_LOCK", lock), \
-                        patch.object(UPDATE, "mirror_check"), \
-                        patch.object(UPDATE, "execute",
-                                     side_effect=lambda *args: contents if args[1] == "find"
-                                     else "") as execute, \
-                        patch.object(UPDATE, "backup") as backup, \
-                        patch.object(UPDATE.shutil, "copy2"):
-                    if contents:
-                        with self.assertRaisesRegex(RuntimeError, "not empty"):
-                            UPDATE.mirror_worker("backup", "19.5.4", "20261121T080000Z")
-                        backup.assert_not_called()
-                    else:
-                        UPDATE.mirror_worker("backup", "19.5.4", "20261121T080000Z")
-                        backup.assert_called_once()
-                        self.assertEqual(backup.call_args.kwargs["backup_root"],
-                                         "/gitlab-backup-archives/.sync")
-                        execute.assert_any_call("gitlab16", "rmdir", "--",
-                                                "/gitlab-backup-archives/.sync")
-                    execute.assert_any_call("gitlab16", "install", "-d", "-o", "git",
-                                            "-g", "git", "-m", "0700",
-                                            "/gitlab-backup-archives/.sync")
+    def test_mirror_saves_configuration_without_backing_up_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            lock = root / "lock"
+            lock.mkdir()
+            (lock / "updater").write_text("20261121T080000Z")
+            directory = root / "backups" / "20261121T080000Z" / "19.5.4"
+            original_path = UPDATE.Path
+            def path(value):
+                if value == "/Users/hannes/server/gitlab/backups/updates":
+                    return root / "backups"
+                return original_path(value)
+            with patch.object(UPDATE, "MIRROR_LOCK", lock), \
+                    patch.object(UPDATE, "Path", side_effect=path), \
+                    patch.object(UPDATE, "mirror_check"), \
+                    patch.object(UPDATE, "command", return_value='[{}]'), \
+                    patch.object(UPDATE, "mirror_files", return_value=[
+                        root / "docker-compose.yml", root / "docker-compose.override.yml"]), \
+                    patch.object(UPDATE, "execute") as execute, \
+                    patch.object(UPDATE, "backup") as backup, \
+                    patch.object(UPDATE.shutil, "copy2") as copy:
+                UPDATE.mirror_worker("save-config", "19.5.4", "20261121T080000Z")
+            backup.assert_not_called()
+            self.assertTrue((directory / "gitlab-configuration.tar").exists())
+            self.assertEqual([call.args[0].name for call in copy.call_args_list],
+                             ["docker-compose.yml", "docker-compose.override.yml"])
+            self.assertEqual(execute.call_args.args,
+                             ("gitlab16", "tar", "-cf", "-", "-C", "/etc", "gitlab"))
+
+    def test_mirror_files_accepts_only_existing_labeled_base_and_override(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary) / "docker-compose.yml"
+            override = base.with_name("docker-compose.override.yml")
+            base.touch()
+            override.touch()
+            def details(value):
+                return {"Config": {"Labels": {"com.docker.compose.project.config_files": value}}}
+            with patch.object(UPDATE, "MIRROR_COMPOSE", base):
+                self.assertEqual(UPDATE.mirror_files(details(str(base))), [base])
+                self.assertEqual(UPDATE.mirror_files(details(f"{base},{override}")), [base, override])
+                with self.assertRaisesRegex(RuntimeError, "Unexpected"):
+                    UPDATE.mirror_files(details(f"{base},{override},/tmp/extra.yml"))
+                override.unlink()
+                override.symlink_to(base)
+                with self.assertRaisesRegex(RuntimeError, "unsafe"):
+                    UPDATE.mirror_files(details(f"{base},{override}"))
+
+    def test_override_path_normalization_preserves_private_settings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            override = Path(temporary) / "docker-compose.override.yml"
+            before = ('{"environment": "unrelated secret", "config": '
+                      '"gitlab_rails[\\u0027backup_path\\u0027] = \\u0027ignored\\u0027"}')
+            old = "gitlab_rails['backup_path'] = '/gitlab-backup-archives'"
+            before += old
+            override.write_text(before)
+            override.chmod(0o600)
+            UPDATE.normalize_mirror_override(override)
+            self.assertEqual(override.read_text(), before.replace(
+                old, "gitlab_rails['backup_path'] = '/gitlab-backup-archives/.sync'"))
+            self.assertEqual(override.stat().st_mode & 0o777, 0o600)
+            with self.assertRaisesRegex(RuntimeError, "changed"):
+                UPDATE.normalize_mirror_override(override)
+
+    def test_mirror_config_requires_known_recoverable_backup_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary) / "docker-compose.yml"
+            override = base.with_name("docker-compose.override.yml")
+            old = "gitlab_rails['backup_path'] = '/gitlab-backup-archives'"
+            override.write_text(old)
+            def response(value):
+                return json.dumps({"services": {"gitlab": {"environment": {
+                    "GITLAB_OMNIBUS_CONFIG": value}}}})
+            with patch.object(UPDATE, "mirror_dc") as dc:
+                dc.return_value = response(old)
+                self.assertTrue(UPDATE.mirror_config([base, override])[1])
+                with self.assertRaisesRegex(RuntimeError, "Unsupported"):
+                    UPDATE.mirror_config([base])
+                dc.return_value = response(old.replace("/gitlab-backup-archives", "/elsewhere"))
+                with self.assertRaisesRegex(RuntimeError, "Unsupported"):
+                    UPDATE.mirror_config([base, override])
+                dc.return_value = response(old.replace("/gitlab-backup-archives",
+                                                       UPDATE.MIRROR_BACKUP_ROOT))
+                self.assertFalse(UPDATE.mirror_config([base, override])[1])
+
+    @unittest.skipUnless(shutil.which("docker"), "Docker Compose is not available")
+    def test_mirror_update_renders_and_preserves_real_compose_override(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            lock = root / "lock"
+            lock.mkdir()
+            (lock / "updater").write_text("20261121T080000Z")
+            base = root / "docker-compose.yml"
+            base.write_text(
+                "services:\n  gitlab:\n"
+                "    image: gitlab/gitlab-ce:19.5.3-ce.0\n"
+                "    environment:\n      GITLAB_OMNIBUS_CONFIG: |\n"
+                "        gitlab_rails['backup_path'] = '/gitlab-backup-archives/.sync'\n")
+            override = root / "docker-compose.override.yml"
+            old = "gitlab_rails['backup_path'] = '/gitlab-backup-archives'"
+            private_config = "external_url 'https://example.test'\n" + old + "\n"
+            override.write_text(json.dumps({"services": {"gitlab": {"environment": {
+                "GITLAB_OMNIBUS_CONFIG": private_config}}}}))
+            before = override.read_text()
+            override.chmod(0o600)
+            up_calls = []
+            def command(*args, **kwargs):
+                if args[:2] == ("docker", "inspect"):
+                    return "[{}]"
+                if "up" in args:
+                    up_calls.append(args)
+                    return ""
+                return subprocess.run(args, text=True, capture_output=True, check=True).stdout
+            with patch.object(UPDATE, "MIRROR_LOCK", lock), \
+                    patch.object(UPDATE, "MIRROR_COMPOSE", base), \
+                    patch.object(UPDATE, "mirror_files", return_value=[base, override]), \
+                    patch.object(UPDATE, "mirror_check"), \
+                    patch.object(UPDATE, "command", side_effect=command), \
+                    patch.object(UPDATE, "check_gitlab") as check:
+                UPDATE.mirror_worker("update", "19.5.4", "20261121T080000Z")
+            self.assertEqual(override.read_text(), before.replace(
+                old, "gitlab_rails['backup_path'] = '/gitlab-backup-archives/.sync'"))
+            self.assertEqual(override.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(up_calls[0][:6],
+                             ("docker", "compose", "-f", base, "-f", override))
+            check.assert_called_once_with("gitlab16", "19.5.4", wait=True)
 
     def test_dry_run_never_calls_update(self):
         with patch.object(sys, "argv", ["update", "--versions", "19.5.4"]), \
@@ -229,7 +332,8 @@ class GitlabUpdateTest(unittest.TestCase):
                             ("PENDING", root / "backups/update-in-progress.json")):
             stack.enter_context(patch.object(UPDATE, name, value))
         mocks = {}
-        for name in ("require_paused_ci", "command", "remote", "backup", "check_gitlab", "dc"):
+        for name in ("require_paused_ci", "command", "remote", "backup", "check_gitlab",
+                     "dc", "wait_runner"):
             mocks[name] = stack.enter_context(patch.object(UPDATE, name))
         mocks["backup"].side_effect = lambda container, path: path.mkdir()
         stack.enter_context(patch.object(UPDATE, "log"))
@@ -251,9 +355,11 @@ class GitlabUpdateTest(unittest.TestCase):
             self.assertFalse(UPDATE.PENDING.exists())
             self.assertEqual(len(list(root.glob("backups/*/completed.json"))), 1)
             self.assertEqual([call.args[1] for call in mocks["remote"].call_args_list],
-                             ["acquire", "pull", "backup", "update",
-                              "pull", "backup", "update", "release"])
+                             ["acquire", "pull", "save-config", "update",
+                              "pull", "save-config", "update", "release"])
             jobs.gitlab.assert_called_once_with()
+            mocks["wait_runner"].assert_called_once_with("19.5.5")
+            self.assertEqual(mocks["backup"].call_count, 2)
             for call in mocks["dc"].call_args_list:
                 if "up" in call.args:
                     self.assertEqual(call.args[1:],
@@ -282,6 +388,57 @@ class GitlabUpdateTest(unittest.TestCase):
             self.assertFalse(UPDATE.BACKUPS.exists())
             mocks["remote"].assert_not_called()
             mocks["command"].assert_not_called()
+
+    def test_ci_guard_checks_active_runners_and_in_progress_builds(self):
+        with patch.object(UPDATE, "execute") as execute:
+            UPDATE.require_paused_ci()
+        container, executable, command, source = execute.call_args.args
+        self.assertEqual((container, executable, command),
+                         (UPDATE.CONTAINER, "gitlab-rails", "runner"))
+        self.assertIn("Ci::Runner.active.exists?", source)
+        self.assertIn("Ci::Build.where(status: %w[running preparing]).exists?", source)
+        self.assertNotIn("where(paused:", source)
+
+    def test_wait_runner_waits_for_matching_running_container(self):
+        with patch.object(UPDATE, "command", side_effect=[
+                "active", "active", "gitlab/gitlab-runner:v19.5.3",
+                "active", "gitlab/gitlab-runner:v19.6.0"]), \
+                patch.object(UPDATE, "dc", side_effect=["", "old-id", "new-id"]), \
+                patch.object(UPDATE.time, "sleep"):
+            UPDATE.wait_runner("19.6.0")
+
+    def test_wait_runner_times_out(self):
+        with patch.object(UPDATE, "command", return_value="active"), \
+                patch.object(UPDATE, "dc", return_value=""), \
+                patch.object(UPDATE.time, "monotonic", side_effect=[0, 121]):
+            with self.assertRaisesRegex(RuntimeError, "Timed out"):
+                UPDATE.wait_runner("19.6.0", timeout=120)
+
+    def test_failed_standby_configuration_backup_prevents_upgrade(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _, original, mocks, jobs, args = self.fixture(temporary)
+            def remote(jobs, action, target, run_id):
+                if action == "save-config":
+                    raise RuntimeError("standby configuration backup failed")
+            mocks["remote"].side_effect = remote
+            with self.assertRaisesRegex(RuntimeError, "standby configuration backup failed"):
+                UPDATE.update(jobs, args, "19.5.3")
+            self.assertEqual(json.loads(UPDATE.APPS.read_text()), original)
+            self.assertTrue(UPDATE.PENDING.exists())
+            mocks["dc"].assert_not_called()
+            jobs.gitlab.assert_not_called()
+
+    def test_runner_wait_failure_prevents_verification_and_sync(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _, _, mocks, jobs, args = self.fixture(temporary)
+            mocks["wait_runner"].side_effect = RuntimeError("runner not ready")
+            with self.assertRaisesRegex(RuntimeError, "runner not ready"):
+                UPDATE.update(jobs, args, "19.5.3")
+            self.assertFalse(any("verify" in call.args for call in mocks["dc"].call_args_list))
+            self.assertFalse(any(call.args[1] == "release"
+                                 for call in mocks["remote"].call_args_list))
+            self.assertTrue(UPDATE.PENDING.exists())
+            jobs.gitlab.assert_not_called()
 
     def test_failed_final_sync_does_not_mark_update_completed(self):
         with tempfile.TemporaryDirectory() as temporary:
