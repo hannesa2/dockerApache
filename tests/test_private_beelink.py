@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import importlib.util
 import io
+from contextlib import redirect_stderr
 from pathlib import Path
 import subprocess
 import tempfile
@@ -51,10 +52,30 @@ class PrivateBeelinkTest(unittest.TestCase):
     def test_privileged_read_failure_is_not_hashed_as_empty_success(self):
         process = Mock(stdout=io.BytesIO(b""), args=["sudo"])
         process.wait.return_value = 1
+        errors = io.StringIO()
         with patch.object(PRIVATE, "short_hostname", return_value="beelink"), \
-                patch.object(PRIVATE.subprocess, "Popen", return_value=process):
+                patch.object(PRIVATE.subprocess, "Popen", return_value=process), \
+                patch.object(PRIVATE.subprocess, "run",
+                             return_value=Mock(returncode=1)) as sudo_check, \
+                redirect_stderr(errors):
             with self.assertRaises(subprocess.CalledProcessError):
                 PRIVATE.digest(PRIVATE.BEELINK_MATOMO, b"key")
+        self.assertIn("sudo -v", errors.getvalue())
+        sudo_check.assert_called_once_with(
+            ["sudo", "-n", "-v"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+
+    def test_privileged_read_error_with_valid_sudo_does_not_suggest_credentials(self):
+        process = Mock(stdout=io.BytesIO(b""), args=["sudo"])
+        process.wait.return_value = 1
+        errors = io.StringIO()
+        with patch.object(PRIVATE, "short_hostname", return_value="beelink"), \
+                patch.object(PRIVATE.subprocess, "Popen", return_value=process), \
+                patch.object(PRIVATE.subprocess, "run", return_value=Mock(returncode=0)), \
+                redirect_stderr(errors):
+            with self.assertRaises(subprocess.CalledProcessError):
+                PRIVATE.digest(PRIVATE.BEELINK_MATOMO, b"key")
+        self.assertNotIn("sudo -v", errors.getvalue())
 
 
 if __name__ == "__main__":

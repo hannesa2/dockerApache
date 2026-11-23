@@ -37,6 +37,13 @@ def plaintext_stream(path):
             process.stdout.close()
             status = process.wait()
             if status:
+                cached_sudo = subprocess.run(
+                    ["sudo", "-n", "-v"], stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                if cached_sudo.returncode:
+                    print("HINT: sudo credentials may be required; run 'sudo -v' "
+                          "in this terminal and retry the command.", file=sys.stderr)
                 raise subprocess.CalledProcessError(status, process.args)
     else:
         with path.open("rb") as stream:

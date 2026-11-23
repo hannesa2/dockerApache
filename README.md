@@ -109,7 +109,9 @@ GPG, verschlüsselte Dateien und der
 lokale Prüfstatus bleiben beim Benutzer; die temporäre Klartextkopie wird
 auch bei Fehlern entfernt. Die Prüfung liest dieselbe aktive Datei mit
 `sudo -n`; ohne gültige sudo-Berechtigung meldet sie einen Fehler statt einen
-veralteten Stand zu bestätigen. Eine Entschlüsselung in das geschützte
+veralteten Stand zu bestätigen. Wenn sudo-Anmeldedaten fehlen, weist sie auf
+`sudo -v` im selben Terminal hin; anschließend den Git-Befehl erneut ausführen.
+Eine Entschlüsselung in das geschützte
 Produktionsverzeichnis erfolgt nicht automatisch; dafür einen beschreibbaren
 `MATOMO_CONFIG_PATH` angeben und die Wiederherstellung bewusst durchführen.
 
