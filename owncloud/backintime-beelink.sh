@@ -74,6 +74,11 @@ trap 'exit 143' TERM
 
 exec 9>/run/lock/beelink-staging-control.lock
 flock -n 9 || fail "Another production lifecycle operation is running."
+exec 8>/run/lock/owncloud-backintime-online.lock
+flock -n 8 || fail "An online ownCloud backup is already running."
+if systemctl is-active --quiet owncloud-backintime-online.service; then
+    fail "The online ownCloud backup service is still active."
+fi
 systemctl is-active --quiet beelink-production.service || fail "Production service is not active."
 ls -ld /daten/. /datenBackup/. >/dev/null
 [[ "$(findmnt -rn -M /daten -t ext4 -o UUID)" == c0c42461-ae4c-4edb-a993-bba94a05ed6c ]] ||
@@ -139,6 +144,17 @@ EOF
 
 backintime --config "$config" --profile 1 check-config --no-crontab
 
+baseline="$(backintime --config "$config" --profile 1 --quiet show --last --path)"
+[[ "$baseline" == "$destination"/backintime/beelink/root/1/* &&
+   ! -L "$baseline" && -d "$baseline" && ! -e "$baseline/failed" &&
+   -f "$baseline/backup$data/.ocdata" &&
+   -f "$baseline/backup$volume/config/config.php" &&
+   -d "$baseline/backup$volume/apps" ]] ||
+    fail "A usable preliminary snapshot is required; ownCloud was not stopped."
+[[ ! -e "$destination/backintime/beelink/root/1/new_snapshot" ]] ||
+    fail "An incomplete snapshot exists; inspect it before the final pass."
+echo "Using preliminary snapshot: $baseline"
+
 echo "Enabling maintenance mode and stopping ownCloud for the entire snapshot."
 maintenance=1
 docker exec --user www-data "$web_id" occ maintenance:mode --on
@@ -162,6 +178,7 @@ sha256sum "$stage/owncloud.dump" > "$stage/owncloud.dump.sha256"
 backintime --config "$config" --profile 1 backup
 snapshot="$(backintime --config "$config" --profile 1 --quiet show --last --path)"
 [[ "$snapshot" == "$destination"/backintime/beelink/root/1/* &&
+   "$snapshot" != "$baseline" &&
    ! -e "$snapshot/failed" &&
    -f "$snapshot/backup$data/.ocdata" &&
    -f "$snapshot/backup$volume/config/config.php" &&

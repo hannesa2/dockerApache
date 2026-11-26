@@ -24,6 +24,8 @@ elif name == "findmnt":
           else "c0c42461-ae4c-4edb-a993-bba94a05ed6c")
 elif name == "stat":
     print("0:700")
+elif name == "systemctl":
+    sys.exit(3 if "owncloud-backintime-online.service" in args else 0)
 elif name == "curl":
     print(json.dumps({"installed": True, "maintenance": os.environ.get("TEST_UNHEALTHY") == "1"}))
 elif name == "docker":
@@ -64,7 +66,9 @@ elif name == "backintime":
         if os.environ.get("TEST_FAIL") == "missing":
             (snapshot / "backup" / str(root / "stage/owncloud.dump").lstrip("/")).unlink()
     elif "show" in args:
-        print(root / "destination/backintime/beelink/root/1/20260101-000000-001")
+        base = root / "destination/backintime/beelink/root/1"
+        print(base / ("20260101-000000-001" if (base / "20260101-000000-001").exists()
+                      else "20251231-000000-001"))
 '''
 
 
@@ -76,6 +80,14 @@ class OwncloudBackintimeTest(unittest.TestCase):
                 (root / path).mkdir(parents=True, exist_ok=True)
             (root / "data/.ocdata").touch()
             (root / "volume/config/config.php").touch()
+            baseline = root / "destination/backintime/beelink/root/1/20251231-000000-001/backup"
+            for source in (root / "data", root / "volume/config", root / "volume/apps"):
+                target = baseline / str(source).lstrip("/")
+                target.mkdir(parents=True)
+            (baseline / str(root / "data/.ocdata").lstrip("/")).touch()
+            (baseline / str(root / "volume/config/config.php").lstrip("/")).touch()
+            if failure == "baseline":
+                (baseline / str(root / "data/.ocdata").lstrip("/")).unlink()
             fake = root / "bin/fake"
             fake.write_text(FAKE)
             fake.chmod(0o755)
@@ -93,6 +105,7 @@ class OwncloudBackintimeTest(unittest.TestCase):
                 ("/datenBackup/owncloud-root", root / "destination"),
                 ("/run/lock/owncloud-mirror-sync.lock", root / "run/owncloud.lock"),
                 ("/run/lock/beelink-staging-control.lock", root / "run/lifecycle.lock"),
+                ("/run/lock/owncloud-backintime-online.lock", root / "run/online.lock"),
                 ("/run/owncloud-backintime-config.XXXXXXXX", root / "run/config.XXXXXXXX"),
                 ("ls -ld /daten/. /datenBackup/.", f"ls -ld {root}/data/. {root}/destination/."),
             ):
@@ -132,7 +145,7 @@ class OwncloudBackintimeTest(unittest.TestCase):
         self.assertNotIn("docker stop", events)
 
     def test_preflight_failure_does_not_change_service(self):
-        for failure in ("mount", "config"):
+        for failure in ("mount", "config", "baseline"):
             with self.subTest(failure=failure):
                 result, events = self.run_script(failure=failure)
                 self.assertNotEqual(result.returncode, 0)
