@@ -341,6 +341,16 @@ mac2016 runs `monitoring/systems-health-check-mac.sh` hourly at minute 10.
 It checks mac2016 locally and queries beelink over SSH; the hourly beelink
 monitor checks production services and job freshness. Preserve the explicit
 `HOME` and `PATH` in mac2016's cron entry.
+Availability emails include plain-text and HTML alternatives; `FAIL|` markers
+are bold in HTML-capable mail clients. The companion
+`monitoring/send-health-mail.py` submits both parts through `/usr/sbin/sendmail`.
+The same helper is now used by scheduled beelink and mac2016 failure/status
+emails (jobs, ownCloud Back In Time, certificate renewal, config backup,
+night-wake and Home Assistant standby snapshot), so `FAILED` is emphasized
+consistently while plain text remains unchanged.
+Rerun `monitoring/install-mac2016-monitor.sh` as `hannes` on mac2016 to install
+the monitor together with its mail helper; installing only the shell script is
+not sufficient.
 
 ### GitHub artifacts mirror
 
