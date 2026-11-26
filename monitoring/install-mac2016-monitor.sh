@@ -14,7 +14,7 @@ if [[ "$(id -un)" != hannes || "$(hostname -s)" != mac2016 ]]; then
     exit 1
 fi
 
-for command in mail curl docker ssh python3 crontab; do
+for command in /usr/sbin/sendmail curl docker ssh python3 crontab; do
     command -v "$command" >/dev/null || {
         echo "ERROR: Required command is unavailable: $command" >&2
         exit 1
@@ -29,6 +29,7 @@ fi
 install -d -m 0750 "$INSTALL_DIR" "$STATE_DIR"
 install -m 0750 "$SCRIPT_DIR/check-beelink-homeassistant.sh" "$INSTALL_DIR/check-beelink-homeassistant.sh"
 install -m 0750 "$SOURCE_SCRIPT" "$INSTALL_SCRIPT"
+install -m 0750 "$SCRIPT_DIR/send-health-mail.py" "$INSTALL_DIR/send-health-mail.py"
 
 current_crontab="$(mktemp)"
 updated_crontab="$(mktemp)"

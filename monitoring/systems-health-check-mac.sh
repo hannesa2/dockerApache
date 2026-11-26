@@ -8,7 +8,7 @@ PRIMARY_HOST="${PRIMARY_HOST:-beelink}"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/systems-health-monitor"
 STATE_FILE="$STATE_DIR/mac2016-failed-checks"
 LOCK_DIR="$STATE_DIR/mac2016-check.lock"
-MAIL_BIN="$(command -v mail || true)"
+MAIL_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/send-health-mail.py"
 
 mkdir -p "$STATE_DIR"
 chmod 0700 "$STATE_DIR"
@@ -96,8 +96,9 @@ check_http() {
     esac
 }
 
-if [[ -z "$MAIL_BIN" ]]; then
-    echo "ERROR: mail command is unavailable." >&2
+if [[ ! -r "$MAIL_HELPER" || ! -x /usr/sbin/sendmail ]] ||
+    ! command -v python3 >/dev/null; then
+    echo "ERROR: Python mail helper or sendmail is unavailable." >&2
     exit 1
 fi
 
@@ -278,7 +279,7 @@ if [[ ! -f "$STATE_FILE" || -s "$new_failures" || -s "$resolved_failures" ]]; th
         printf '\n%s\n' "$sync_report"
         printf '\nFull check results:\n'
         cat "$checks_file"
-    } | "$MAIL_BIN" -s "$subject" "$RECIPIENT" || {
+    } | python3 "$MAIL_HELPER" "$subject" "$RECIPIENT" || {
         echo "ERROR: Could not submit availability notification to $RECIPIENT." >&2
         exit 1
     }

@@ -29,6 +29,10 @@ tell application "Amphetamine"
 end tell
 """
 SNAPSHOTS = HOME / "server/homeassistant/standby-snapshots"
+MAIL_HELPERS = (
+    Path(__file__).with_name("send-health-mail.py"),
+    HOME / "bin/send-health-mail.py",
+)
 
 
 def wake():
@@ -115,6 +119,10 @@ def install():
             installed = True
             shutil.copyfileobj(source, target)
         INSTALLED.chmod(0o700)
+        helper = Path(__file__).with_name("send-health-mail.py")
+        if helper.is_file():
+            shutil.copyfile(helper, HOME / "bin/send-health-mail.py")
+            (HOME / "bin/send-health-mail.py").chmod(0o700)
         with PLIST.open("xb") as file:
             plist_created = True
             plistlib.dump(definition, file)
@@ -153,14 +161,19 @@ def main():
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         print("ERROR: mac2016 nightly keep-awake failed:", error, file=sys.stderr, flush=True)
         if args.wake or args.sleep or args.sleep_now:
-            try:
-                subprocess.run(
-                    ["/usr/bin/mail", "-s", "[mac2016] nightly keep-awake failed",
-                     "hannes.software@gmx.at"], input=str(error), text=True, check=True,
-                    timeout=60)
-            except (OSError, subprocess.SubprocessError) as mail_error:
-                print("ERROR: failure notification failed:", mail_error,
-                      file=sys.stderr, flush=True)
+            for helper in MAIL_HELPERS:
+                if helper.is_file():
+                    try:
+                        subprocess.run(
+                            ["python3", str(helper), "[mac2016] nightly keep-awake failed",
+                             "hannes.software@gmx.at"], input=str(error),
+                            text=True, check=True, timeout=60)
+                    except (OSError, subprocess.SubprocessError) as mail_error:
+                        print("ERROR: failure notification failed:", mail_error,
+                              file=sys.stderr, flush=True)
+                    break
+            else:
+                print("ERROR: failure notification helper missing", file=sys.stderr, flush=True)
         raise
 
 

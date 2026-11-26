@@ -39,6 +39,11 @@ LIFECYCLE_LOCK = Path("/run/lock/beelink-staging-control.lock")
 NIGHT_JOBS = ("apache", "gitlab", "owncloud", "mxserver", "matomo")
 PG = ("beelink-databases-mxserver-1", "beelink-databases-owncloud-1",
       "camera-postgres-db-1")
+MAIL_HELPERS = (
+    Path(__file__).with_name("send-health-mail.py"),
+    INSTALLED / "send-health-mail.py",
+    Path("/Users/hannes/bin/send-health-mail.py"),
+)
 
 
 def run(*args, **kwargs):
@@ -52,6 +57,15 @@ def capture(*args):
 def remote(script, **kwargs):
     return run("ssh", *SSH_OPTIONS, MIRROR, "/bin/bash -euo pipefail -c " + shlex.quote(
         "export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin; " + script), **kwargs)
+
+
+def send_status_mail(subject, body):
+    for helper in MAIL_HELPERS:
+        if helper.is_file():
+            run("python3", str(helper), subject, "hannes.software@gmx.at",
+                input=body, text=True)
+            return
+    raise RuntimeError("Mail helper is unavailable: send-health-mail.py")
 
 
 def guard():
@@ -213,7 +227,7 @@ def local_health():
 
 def preflight():
     guard()
-    for command in ("rsync", "ssh", "docker", "mail"):
+    for command in ("rsync", "ssh", "docker", "python3", "sendmail"):
         run("/usr/bin/which", command)
     for container, database in ((PG[0], "MXServer"), (PG[1], "owncloud_stage")):
         run("docker", "exec", container, "pg_isready", "-U", "beelink_restore", "-d", database)
@@ -411,9 +425,10 @@ def notified_run(job):
         temporary.replace(status_path)
         # Monitoring retains change-only alerts; scheduled backup/sync jobs mail every run.
         if job != "monitor" or previous.get("result") != report["result"]:
-            run("/usr/bin/mail", "-s", f"[beelink] {report['result']}: {JOBS[job][1]}",
-                "hannes.software@gmx.at",
-                input=json.dumps(report, indent=2) + "\n\n" + text[-20000:], text=True)
+            send_status_mail(
+                f"[beelink] {report['result']}: {JOBS[job][1]}",
+                json.dumps(report, indent=2) + "\n\n" + text[-20000:],
+            )
         if not success:
             raise RuntimeError(error)
 
@@ -481,6 +496,7 @@ def install():
     import shutil
     for source, target in (
             (ROOT / "beelink-jobs.py", INSTALLED / "beelink-jobs.py"),
+            (ROOT / "send-health-mail.py", INSTALLED / "send-health-mail.py"),
             (ROOT / "postgresql-backup.sh", INSTALLED / "postgresql-backup.sh"),
             (ROOT / "sync-matomo.py", INSTALLED / "sync-matomo.py"),
             (ROOT.parent / "owncloud/sync-beelink.sh", INSTALLED / "owncloud/sync-beelink.sh"),
@@ -516,6 +532,8 @@ if test ! -f /Users/hannes/.local/state/beelink-jobs/mac-monitor-before-cutover.
 fi
 install -m 0755 /Users/hannes/git/dockerApache/monitoring/systems-health-check-mac.sh \
     /Users/hannes/bin/systems-health-check-mac.sh
+install -m 0755 /Users/hannes/git/dockerApache/monitoring/send-health-mail.py \
+    /Users/hannes/bin/send-health-mail.py
 HOME=/Users/hannes PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
     /Users/hannes/bin/systems-health-check-mac.sh
 """)

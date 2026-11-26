@@ -25,6 +25,10 @@ LABEL = "info.mxtracks.homeassistant-standby"
 PLIST = HOME / "Library/LaunchAgents" / (LABEL + ".plist")
 INSTALLED = HOME / "bin/sync-homeassistant-standby.py"
 LOG = HOME / "Library/Logs/homeassistant-standby.log"
+MAIL_HELPERS = (
+    Path(__file__).with_name("send-health-mail.py"),
+    HOME / "bin/send-health-mail.py",
+)
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
        "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "beelink"]
 REMOTE_DB = """import os, sqlite3, sys, tempfile
@@ -127,6 +131,10 @@ def install():
     INSTALLED.parent.mkdir(mode=0o700, exist_ok=True)
     shutil.copyfile(__file__, INSTALLED)
     INSTALLED.chmod(0o700)
+    helper = Path(__file__).with_name("send-health-mail.py")
+    if helper.is_file():
+        shutil.copyfile(helper, HOME / "bin/send-health-mail.py")
+        (HOME / "bin/send-health-mail.py").chmod(0o700)
     plist = {
         "Label": LABEL, "ProgramArguments": [sys.executable, str(INSTALLED), "--sync"],
         "StartCalendarInterval": {"Hour": 3, "Minute": 50},
@@ -156,10 +164,19 @@ def main():
     except (OSError, RuntimeError, subprocess.SubprocessError, sqlite3.Error, tarfile.TarError) as error:
         print("ERROR: Home Assistant standby snapshot failed:", error, file=sys.stderr, flush=True)
         if args.sync:
-            mail = subprocess.run(["/usr/bin/mail", "-s", "[mac2016] Home Assistant standby snapshot failed",
-                                   "hannes.software@gmx.at"], input=str(error), text=True, check=False)
-            if mail.returncode:
-                print("ERROR: failure notification could not be sent", file=sys.stderr, flush=True)
+            for helper in MAIL_HELPERS:
+                if helper.is_file():
+                    mail = subprocess.run(
+                        ["python3", str(helper),
+                         "[mac2016] Home Assistant standby snapshot failed",
+                         "hannes.software@gmx.at"],
+                        input=str(error), text=True, check=False)
+                    if mail.returncode:
+                        print("ERROR: failure notification could not be sent",
+                              file=sys.stderr, flush=True)
+                    break
+            else:
+                print("ERROR: failure notification helper missing", file=sys.stderr, flush=True)
         raise
 
 

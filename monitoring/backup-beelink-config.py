@@ -28,6 +28,11 @@ RESTORE_PREFIX = "beelink-config-restore-"
 INSTALLED = Path("/usr/local/libexec/beelink-config-backup")
 UNIT_DIR = Path("/etc/systemd/system")
 NAME = "beelink-config-backup"
+MAIL_HELPERS = (
+    Path(__file__).with_name("send-health-mail.py"),
+    INSTALLED / "send-health-mail.py",
+    Path("/usr/local/libexec/beelink-jobs/send-health-mail.py"),
+)
 
 
 def parse_environment(text):
@@ -259,7 +264,8 @@ def install_weekly(environment):
     INSTALLED.mkdir(mode=0o700, parents=True, exist_ok=True)
     if INSTALLED.stat().st_uid != 0 or INSTALLED.stat().st_mode & 0o077:
         raise RuntimeError("Configuration backup helper directory must be root-private")
-    for name in ("backup-beelink-config.py", "control-beelink-staging.py"):
+    for name in ("backup-beelink-config.py", "control-beelink-staging.py",
+                 "send-health-mail.py"):
         source = Path(__file__).with_name(name)
         target = INSTALLED / name
         if target.is_symlink():
@@ -285,12 +291,17 @@ def install_weekly(environment):
 
 
 def notify_failure():
-    subprocess.run(
-        ["/usr/bin/mail", "-s", "[beelink] FAILED: encrypted configuration backup",
-         "hannes.software@gmx.at"],
-        input="Configuration backup failed. Inspect: journalctl -u "
-              "beelink-config-backup.service --no-pager\n",
-        text=True, check=True, timeout=60)
+    for helper in MAIL_HELPERS:
+        if helper.is_file():
+            subprocess.run(
+                ["python3", str(helper),
+                 "[beelink] FAILED: encrypted configuration backup",
+                 "hannes.software@gmx.at"],
+                input="Configuration backup failed. Inspect: journalctl -u "
+                      "beelink-config-backup.service --no-pager\n",
+                text=True, check=True, timeout=60)
+            return
+    raise RuntimeError("Mail helper is unavailable: send-health-mail.py")
 
 
 def main():

@@ -40,6 +40,10 @@ INSTALLED = Path("/usr/local/libexec/renew-beelink-certificates.py")
 UNITS = Path("/etc/systemd/system")
 NAME = "beelink-certificates"
 LOCK = Path("/run/lock/beelink-staging-control.lock")
+MAIL_HELPERS = (
+    Path(__file__).with_name("send-health-mail.py"),
+    Path("/usr/local/libexec/beelink-jobs/send-health-mail.py"),
+)
 
 
 def log(message):
@@ -56,6 +60,15 @@ def capture(*args):
 
 def active(unit):
     return subprocess.run(["systemctl", "is-active", "--quiet", unit]).returncode == 0
+
+
+def send_status_mail(subject, body):
+    for helper in MAIL_HELPERS:
+        if helper.is_file():
+            run("python3", str(helper), subject, "hannes.software@gmx.at",
+                input=body, text=True)
+            return
+    raise RuntimeError("Mail helper is unavailable: send-health-mail.py")
 
 
 def guard():
@@ -283,9 +296,7 @@ def notify(success, error=None):
             f"Mirrors imported: {(CONFIG / 'renewal' / (MIRRORS[0] + '.conf')).is_file()}\n"
             f"Details: {error or 'Certbot completed; served certificates verified.'}\n"
             "Log: journalctl -u beelink-certificates.service\n")
-    subprocess.run(
-        ["/usr/bin/mail", "-s", f"[beelink] {result}: certificate renewal",
-         "hannes.software@gmx.at"], input=body, text=True, check=True, timeout=60)
+    send_status_mail(f"[beelink] {result}: certificate renewal", body)
     log("Status email submitted to hannes.software@gmx.at: " + result)
 
 
@@ -328,6 +339,11 @@ def install():
     INSTALLED.parent.mkdir(parents=True, exist_ok=True)
     if Path(__file__).resolve() != INSTALLED.resolve():
         shutil.copyfile(Path(__file__), INSTALLED)
+        helper = Path(__file__).with_name("send-health-mail.py")
+        if helper.is_file():
+            target = INSTALLED.with_name("send-health-mail.py")
+            shutil.copyfile(helper, target)
+            target.chmod(0o700)
     INSTALLED.chmod(0o700)
     for name, text in units().items():
         (UNITS / name).write_text(text)

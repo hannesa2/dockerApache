@@ -29,6 +29,11 @@ SID = re.compile(r"^\d{8}-\d{6}-\d{3}$")
 RESERVE = 100 * 1024**3
 PINNED = "20261126-063812-580"
 RECIPIENT = "hannes.software@gmx.at"
+MAIL_HELPERS = (
+    Path(__file__).with_name("send-health-mail.py"),
+    INSTALL / "send-health-mail.py",
+    Path("/usr/local/libexec/beelink-jobs/send-health-mail.py"),
+)
 
 
 def run(*args, **kwargs):
@@ -41,6 +46,14 @@ def capture(*args):
 
 def active(unit):
     return subprocess.run(["systemctl", "is-active", "--quiet", unit]).returncode == 0
+
+
+def send_status_mail(subject, body):
+    for helper in MAIL_HELPERS:
+        if helper.is_file():
+            run("python3", str(helper), subject, RECIPIENT, input=body, text=True)
+            return
+    raise RuntimeError("Mail helper is unavailable: send-health-mail.py")
 
 
 def write_json(path, value):
@@ -250,8 +263,7 @@ def alert(status, message):
     previous_path = STATE / "alert.json"
     previous = json.loads(previous_path.read_text()) if previous_path.exists() else {}
     if previous.get("status") != status or previous.get("message") != message:
-        run("/usr/bin/mail", "-s", "[beelink] ownCloud Back In Time: " + status,
-            RECIPIENT, input=message + "\n", text=True)
+        send_status_mail("[beelink] ownCloud Back In Time: " + status, message + "\n")
         write_json(previous_path, {"status": status, "message": message})
 
 
@@ -321,7 +333,7 @@ WantedBy=timers.target
 
 def install():
     mounts()
-    for command in ("backintime", "docker", "rsync", "mail", "systemd-run",
+    for command in ("backintime", "docker", "rsync", "python3", "sendmail", "systemd-run",
                     "systemd-analyze", "curl"):
         if not shutil.which(command):
             raise RuntimeError("Missing command: " + command)
@@ -331,6 +343,10 @@ def install():
         if source.resolve() != (INSTALL / name).resolve():
             run("install", "-o", "root", "-g", "root", "-m", "0700",
                 str(source), str(INSTALL / name))
+    mail_source = ROOT.parent / "monitoring/send-health-mail.py"
+    if mail_source.is_file() and mail_source.resolve() != (INSTALL / "send-health-mail.py").resolve():
+        run("install", "-o", "root", "-g", "root", "-m", "0700",
+            str(mail_source), str(INSTALL / "send-health-mail.py"))
     STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
     STATE.chmod(0o700)
     for name in ("verified", "preliminary"):
