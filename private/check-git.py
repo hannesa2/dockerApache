@@ -6,6 +6,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 args = sys.argv[1:]
+after_pull = bool(args and args[0] == "--after-pull")
+if after_pull:
+    args = args[1:]
 options = []
 i = 0
 with_value = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"}
@@ -22,10 +25,14 @@ while i < len(args):
     else:
         break
 
-if i < len(args) and args[i] in ("status", "commit", "pull"):
+if i < len(args) and args[i] in (("pull",) if after_pull else ("status", "commit", "pull")):
     result = subprocess.run(["git", *options, "rev-parse", "--show-toplevel"],
                             capture_output=True, text=True)
     if result.returncode == 0 and Path(result.stdout.strip()).resolve() == ROOT:
-        check = subprocess.run(["python3", str(ROOT / "private/check-private.py"), "check"])
+        if not after_pull:
+            check = subprocess.run(["python3", str(ROOT / "private/check-private.py"), "check"])
+            if check.returncode == 2:
+                print("WARNING: Private configuration status could not be checked.", file=sys.stderr)
+        check = subprocess.run(["python3", str(ROOT / "private/check-installed.py")])
         if check.returncode == 2:
-            print("WARNING: Private configuration status could not be checked.", file=sys.stderr)
+            print("WARNING: Installed helper status could not be checked.", file=sys.stderr)

@@ -202,6 +202,29 @@ Eine manuelle Prüfung ist möglich:
 python3 private/check-private.py check
 ```
 
+Auf beelink prüft dieselbe Git-Erinnerung zusätzlich die bekannten installierten
+Skripte unter `/usr/local/libexec` und `/usr/local/bin/beelink-job-status` gegen
+ihre Quelldateien im Checkout. Nach erfolgreichem `git pull` erfolgt die Prüfung
+erneut gegen den neuen Stand. Die Prüfung benötigt ein zuvor im selben Terminal
+ausgeführtes `sudo -v` und meldet fehlende Rechte oder Abweichungen; sie ändert
+keine installierten Dateien und blockiert Git nicht. Nicht zugeordnete Skripte
+in den überwachten Verzeichnissen werden ebenfalls gemeldet. Gepinnte,
+zurückgezogene Migrationshelfer werden nicht mit aktuellen Quellen verglichen.
+Optionale lokale Kopien des Mail-Helfers werden nur verglichen, wenn sie
+vorhanden sind; der gemeinsame Helfer unter `beelink-jobs` bleibt erforderlich.
+Die Prüfung lässt sich auch direkt auf beelink ausführen:
+
+```bash
+python3 private/check-installed.py
+```
+
+Damit eine bereits geöffnete Shell auch die Prüfung nach `git pull` verwendet,
+die Shell-Funktion nach dem Update erneut laden:
+
+```bash
+source "$HOME/git/dockerApache/private/git-notice.sh" "$HOME/git/dockerApache"
+```
+
 Zum Deaktivieren die `source .../private/git-notice.sh`-Zeile aus der
 verwendeten Shell-Konfiguration entfernen (`~/.bashrc`, `~/.zshrc` oder die
 Datei, in die sie eingetragen wurde). Eine neue Shell übernimmt die Änderung;

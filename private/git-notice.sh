@@ -10,5 +10,12 @@ git() {
     printf '%s\n' "WARNING: Private configuration status could not be checked." >&2
     printf '%s\n' "WARNING: Reminder from $PRIVATE_CONFIG_GIT_CHECK; remove the git-notice.sh source line from ~/.bashrc or ~/.zshrc and restart the shell (or run unset -f git)." >&2
   fi
-  command git "$@"
+  if command git "$@"; then
+    if ! command python3 "$PRIVATE_CONFIG_GIT_CHECK" --after-pull "$@"; then
+      printf '%s\n' "WARNING: Installed helper status could not be checked after Git." >&2
+    fi
+    return 0
+  else
+    return "$?"
+  fi
 }

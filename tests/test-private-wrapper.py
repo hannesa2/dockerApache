@@ -17,6 +17,7 @@ class PrivateWrapperTest(unittest.TestCase):
         for directory in ("private", "buildSrc/scripts", "apache", "nextcloud", "matomo", "camera-postgres", "mxserver-postgres", "gnupg", "bin"):
             (self.root / directory).mkdir(parents=True, mode=0o700)
         for path in ("private/private.sh", "private/check-private.py", "private/check-git.py",
+                     "private/check-installed.py",
                      "private/git-notice.sh", "buildSrc/scripts/decrypt.sh"):
             shutil.copy2(SOURCE / path, self.root / path)
             (self.root / path).chmod(0o700)
@@ -389,6 +390,33 @@ class PrivateWrapperTest(unittest.TestCase):
             cwd="/", env=self.env, capture_output=True, text=True,
         )
         self.assertNotIn("WARNING: apache", result.stderr)
+
+    def test_git_pull_checks_installed_helpers_again_after_success(self):
+        marker = self.root / "pulled"
+        checker = self.root / "private/check-installed.py"
+        checker.write_text(
+            "from pathlib import Path\n"
+            "import os, sys\n"
+            "if Path(os.environ['PULL_MARKER']).exists():\n"
+            "    print('post-pull installed warning', file=sys.stderr)\n"
+        )
+        git = self.root / "bin/git"
+        git.write_text(
+            "#!/bin/sh\n"
+            'for arg in "$@"; do\n'
+            '  if [ "$arg" = pull ]; then touch "$PULL_MARKER"; exit 0; fi\n'
+            "done\n"
+            f'exec "{shutil.which("git")}" "$@"\n'
+        )
+        git.chmod(0o700)
+        result = subprocess.run(
+            ["bash", "-c", 'source "$1/private/git-notice.sh" "$1"; git -C "$1" pull',
+             "test", str(self.root)],
+            cwd="/", env=dict(self.env, PULL_MARKER=str(marker)),
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.count("post-pull installed warning"), 1)
 
 
 if __name__ == "__main__":
