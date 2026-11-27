@@ -57,7 +57,9 @@ a full application recovery has not yet been tested.
 
 `schedule-backintime-beelink.py --install` installs the two backup wrappers and
 the scheduler under `/usr/local/libexec/owncloud-backintime`. Run installation
-locally as root on beelink, with all three files in the same source directory.
+locally as root on beelink from the repository checkout at
+`~/git/dockerApache/owncloud`; the scheduler and both wrappers are maintained
+there. The installer copies them to the root-owned runtime directory.
 Installation enables timers but does not start a backup. Deployment requires
 this privileged step; changing this repository alone does not install it.
 
@@ -126,7 +128,7 @@ Installation preserves hannes/root crontabs and comments out only active
 other jobs are untouched. Do not enable a GUI schedule bypassing these wrappers.
 
 ```bash
-sudo python3 /home/hannes/owncloud-backintime-schedule/schedule-backintime-beelink.py --install
+sudo python3 ~/git/dockerApache/owncloud/schedule-backintime-beelink.py --install
 systemctl list-timers 'owncloud-backintime*' --no-pager
 sudo journalctl -u owncloud-backintime-cycle.service \
   -u owncloud-backintime-preliminary-auto.service \
@@ -142,10 +144,21 @@ marker) were restored and checksum-verified, covering four users. Artifacts
 remain at `/datenRestoreTest/stage1-RMxe54mu`. The test container was confirmed
 stopped with networking disabled, and production remained healthy.
 
-`test-backintime-restore-beelink.sh --test` runs as root on beelink, with the
+`owncloud/test-backintime-restore-beelink.sh --test` runs as root on beelink, with the
 encrypted Samsung 870 QVO mounted manually at `/datenRestoreTest`. It checks
 the exact test and backup filesystem UUIDs before writing. It does not configure
 boot-time mounting, stop production, or restore into original paths.
+
+The one-time disk initializer is `owncloud/prepare-owncloud-restore-test-disk.sh`.
+It erases and reformats the specifically identified Samsung SSD; it is not a
+cron job. Run it only when deliberately preparing that test disk, after
+reviewing the disk identity and confirming that its existing contents can be
+destroyed:
+
+```bash
+sudo bash ~/git/dockerApache/owncloud/prepare-owncloud-restore-test-disk.sh \
+  --erase-and-prepare
+```
 
 The script uses snapshot `20261126-063812-580`, verifies and copies its database
 dump, and copies up to three user files per user for up to four users (64 MiB per
@@ -166,7 +179,7 @@ health check succeed. A full application recovery remains a separate test.
 
 ### Full isolated ownCloud recovery rehearsal
 
-`test-full-restore-beelink.sh --test` prepares a full, independent recovery of
+`owncloud/test-full-restore-beelink.sh --test` prepares a full, independent recovery of
 snapshot `20261126-063812-580` on the same encrypted test SSD. This rehearsal is
 prepared but has not yet been run against the full snapshot. It requires a local
 root invocation; the previous partial test and its stopped container can remain.
@@ -203,10 +216,10 @@ write `RESULT.txt` containing `PASS`. Private test data, logs and stopped
 containers remain for inspection. Abrupt termination or host failure may require
 manual cleanup of the test containers.
 
-After transferring the script to beelink, start it independently of the terminal:
+Run the tracked script from the beelink checkout, independently of the terminal:
 
 ```bash
-sudo install -o root -g root -m 0755 /home/hannes/test-full-restore-beelink.sh \
+sudo install -o root -g root -m 0755 ~/git/dockerApache/owncloud/test-full-restore-beelink.sh \
   /usr/local/sbin/owncloud-full-restore-test
 sudo systemd-run --unit=owncloud-full-restore-test \
   --property=Nice=15 --property=IOSchedulingClass=idle \
@@ -227,11 +240,10 @@ consistent pass is always required afterwards. Back In Time
 can report errors on files modified during the live copy; inspect the journal.
 This preliminary copy took nearly 40 hours on the current disk.
 
-On beelink, after transferring the script to
-`/home/hannes/owncloud-backintime-online-beelink.sh`, run locally:
+On beelink, install the tracked preliminary-copy script from the checkout:
 
 ```bash
-sudo install -o root -g root -m 0755 /home/hannes/owncloud-backintime-online-beelink.sh \
+sudo install -o root -g root -m 0755 ~/git/dockerApache/owncloud/backintime-online-beelink.sh \
   /usr/local/sbin/owncloud-backintime-online-beelink
 sudo systemd-run --unit=owncloud-backintime-online --property=TimeoutStartSec=0 \
   /usr/local/sbin/owncloud-backintime-online-beelink --backup
@@ -266,11 +278,10 @@ the wrapper must always be used. Snapshots go to the root-private
 
 The final snapshot still scans the entire tree and may take hours even with
 hardlinks. No retention or automatic failure notification is configured.
-After transferring the revised final-pass script to
-`/home/hannes/owncloud-backintime-final-beelink.sh`, run on beelink:
+Install the tracked final-pass script from the checkout on beelink:
 
 ```bash
-sudo install -o root -g root -m 0755 /home/hannes/owncloud-backintime-final-beelink.sh \
+sudo install -o root -g root -m 0755 ~/git/dockerApache/owncloud/backintime-beelink.sh \
   /usr/local/sbin/owncloud-backintime-final-beelink
 sudo systemd-run --unit=owncloud-backintime-final --property=RuntimeMaxSec=2h \
   --property=TimeoutStopSec=180s --property=KillMode=control-group \
