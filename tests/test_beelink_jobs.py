@@ -90,7 +90,7 @@ class BeelinkJobsTest(unittest.TestCase):
     def test_health_monitor_accepts_only_recorded_sleep_as_expected_offline(self):
         with patch.object(JOBS, "local_health", return_value=[]), \
                 patch.object(JOBS, "remote", side_effect=subprocess.CalledProcessError(255, "ssh")), \
-                patch.object(JOBS, "sleep_requested_today", return_value=True):
+                patch.object(JOBS, "mac2016_sleep_expected", return_value=True):
             JOBS.execute("monitor")
 
     def test_sleeping_mac_does_not_hide_reachable_docker_failure(self):
@@ -98,8 +98,32 @@ class BeelinkJobsTest(unittest.TestCase):
                 patch.object(JOBS, "remote", side_effect=[
                     subprocess.CalledProcessError(1, "docker"),
                     subprocess.CompletedProcess([], 0)]), \
-                patch.object(JOBS, "sleep_requested_today", return_value=True):
+                patch.object(JOBS, "mac2016_sleep_expected", return_value=True):
             with self.assertRaisesRegex(RuntimeError, "Docker standby services"):
+                JOBS.execute("monitor")
+
+    def test_pre_wake_sleep_and_daytime_sleep_request(self):
+        zone = dt.datetime.now().astimezone().tzinfo
+        with patch.object(JOBS, "sleep_requested_today", return_value=False):
+            self.assertTrue(JOBS.mac2016_sleep_expected(dt.datetime(2026, 11, 27, 0, 0, tzinfo=zone)))
+            self.assertTrue(JOBS.mac2016_sleep_expected(dt.datetime(2026, 11, 27, 2, 43, tzinfo=zone)))
+            self.assertFalse(JOBS.mac2016_sleep_expected(dt.datetime(2026, 11, 27, 2, 44, tzinfo=zone)))
+            self.assertFalse(JOBS.mac2016_sleep_expected(dt.datetime(2026, 11, 27, 12, 0, tzinfo=zone)))
+        with patch.object(JOBS, "sleep_requested_today", return_value=True):
+            self.assertTrue(JOBS.mac2016_sleep_expected(dt.datetime(2026, 11, 27, 12, 0, tzinfo=zone)))
+
+    def test_unreachable_mac_during_wake_window_is_failure(self):
+        with patch.object(JOBS, "local_health", return_value=[]), \
+                patch.object(JOBS, "remote", side_effect=subprocess.CalledProcessError(255, "ssh")), \
+                patch.object(JOBS, "mac2016_sleep_expected", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "mac2016 SSH/Docker"):
+                JOBS.execute("monitor")
+
+    def test_local_failures_are_reported_while_mac_is_asleep(self):
+        with patch.object(JOBS, "local_health", return_value=["local failure"]), \
+                patch.object(JOBS, "remote", side_effect=subprocess.CalledProcessError(255, "ssh")), \
+                patch.object(JOBS, "mac2016_sleep_expected", return_value=True):
+            with self.assertRaisesRegex(RuntimeError, "local failure"):
                 JOBS.execute("monitor")
 
     def test_docker_sources_replace_frozen_native_sources(self):

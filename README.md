@@ -341,6 +341,11 @@ mac2016 runs `monitoring/systems-health-check-mac.sh` hourly at minute 10.
 It checks mac2016 locally and queries beelink over SSH; the hourly beelink
 monitor checks production services and job freshness. Preserve the explicit
 `HOME` and `PATH` in mac2016's cron entry.
+The beelink monitor accepts an unreachable mac2016 before its scheduled 02:44
+wake, as well as after a same-day recorded post-jobs sleep request. At and after
+02:44, an unreachable mac2016 without such a request is a failure; a reachable
+mac2016 with broken Docker services remains a failure at any time. Local
+beelink checks continue regardless of the mac2016 sleep state.
 Availability emails include plain-text and HTML alternatives; `FAIL|` markers
 are bold in HTML-capable mail clients. The companion
 `monitoring/send-health-mail.py` submits both parts through `/usr/sbin/sendmail`.

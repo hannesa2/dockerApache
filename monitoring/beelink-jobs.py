@@ -98,6 +98,11 @@ def sleep_requested_today(now=None):
         return False
 
 
+def mac2016_sleep_expected(now=None):
+    now = now or dt.datetime.now().astimezone()
+    return now.time() < dt.time(2, 44) or sleep_requested_today(now)
+
+
 def systemd_succeeded_today(unit, today):
     result = capture("systemctl", "show", unit, "-p", "Result", "--value")
     finished = capture("systemctl", "show", unit, "-p", "ExecMainExitTimestamp", "--value")
@@ -377,11 +382,11 @@ def execute(job):
                    "apache-owncloud-db-1 apache-mxserver-1 apache-mxserver-db-1 gitlab16; do "
                    'test "$(docker inspect -f \'{{.State.Running}}\' "$c")" = true; done')
         except subprocess.CalledProcessError:
-            if sleep_requested_today():
+            if mac2016_sleep_expected():
                 try:
                     remote("true")
                 except subprocess.CalledProcessError:
-                    print("mac2016 is in its verified post-jobs sleep window.", flush=True)
+                    print("mac2016 is unreachable during its expected sleep period.", flush=True)
                 else:
                     failures.append("mac2016 is reachable but its Docker standby services are unavailable")
             else:
