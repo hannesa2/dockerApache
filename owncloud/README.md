@@ -74,6 +74,15 @@ The `owncloud-backintime-cycle.timer` runs daily at **23:00 local time**:
   plus up to 180 seconds for recovery, not a guarantee of three-minute downtime.
 * Only after final success, normal application recovery and matching snapshot
   dump/capture verification is the new ID recorded as a consistent success.
+* Afterwards, `backup-dev-wordpress-beelink.sh` backs up `dev.mxtracks.info`
+  online into its **separate** Back In Time history at
+  `/datenBackup/dev-wordpress-root/backintime/beelink/root/1`. It saves
+  `/daten/beelink-runtime/wordpress/www/dev.mxtracks` and a compressed
+  `wordpress` MySQL dump from `beelink-databases-native-mysql-1`. The site
+  remains online; file and database states can differ in time. The dump uses
+  `--single-transaction` and requires all base tables to be InnoDB. Dump gzip
+  integrity and the snapshot's captured dump are checked. The MySQL dump has
+  not been independently restored by this check.
 
 The online phase has a maximum runtime of three hours, shortened near the
 02:40 deadline. Existing night jobs start at 03:05. No catch-up job runs after
@@ -97,6 +106,13 @@ managed online preliminaries older than a verified final are removed, through
 Back In Time's removal command. Pruning never runs during the full restore test.
 Hardlinks share unchanged data; changing/deleting large files can still require
 more storage than this disk provides. Retention never guarantees future capacity.
+Dev WordPress applies the same 7/4/3 bucket retention independently, only
+to scheduler-verified dev snapshots; unknown snapshots are left untouched.
+Its first run needs space for a full copy; before every dev backup, the full
+website size plus headroom and the 100 GiB safety reserve are required even if
+an incremental copy may use less. If dev backup fails, the overall scheduled
+job reports failure while the already verified ownCloud snapshot is retained.
+If the ownCloud phase fails or is deferred, dev is not backed up that night.
 
 `owncloud-backintime-monitor.timer` checks hourly at minute 30 for a missing
 mount, less than 100 GiB free, a failed cycle or a consistent backup older than

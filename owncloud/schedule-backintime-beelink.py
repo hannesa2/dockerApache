@@ -19,6 +19,10 @@ INSTALL = Path("/usr/local/libexec/owncloud-backintime")
 STATE = Path("/var/lib/owncloud-backintime")
 HISTORY = Path("/datenBackup/owncloud-root/backintime/beelink/root/1")
 STAGE = Path("/daten/beelink-backups/backintime-owncloud")
+DEV_SITE = Path("/daten/beelink-runtime/wordpress/www/dev.mxtracks")
+DEV_STAGE = Path("/daten/beelink-backups/backintime-dev-wordpress")
+DEV_HISTORY = Path("/datenBackup/dev-wordpress-root/backintime/beelink/root/1")
+BACKUP_LOCK = Path("/run/lock/owncloud-backintime-online.lock")
 SOURCES = (
     Path("/daten/beelink-runtime/rootfs/daten/owncloud/data"),
     Path("/daten/beelink-runtime/apps/owncloud/volume/apps"),
@@ -196,7 +200,7 @@ def prune_locked():
 
 
 def prune():
-    with Path("/run/lock/owncloud-backintime-online.lock").open("w") as lock:
+    with BACKUP_LOCK.open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         prune_locked()
 
@@ -206,6 +210,53 @@ def run_phase(name, script, argument, seconds):
         "--property=RuntimeMaxSec=" + str(seconds), "--property=TimeoutStopSec=180s",
         "--property=KillMode=control-group", "--property=Nice=15",
         "--property=IOSchedulingClass=idle", str(INSTALL / script), argument)
+
+
+def backup_dev():
+    """Keep independently verified, online-only WordPress snapshots."""
+    run_phase("dev-online-auto", "backup-dev-wordpress-beelink.sh", "--backup", 3600)
+    last = DEV_HISTORY / "last_snapshot"
+    if not last.is_symlink():
+        raise RuntimeError("Dev WordPress last snapshot link missing")
+    sid = os.readlink(last)
+    if not SID.fullmatch(sid):
+        raise RuntimeError("Invalid dev WordPress snapshot link")
+    snapshot = DEV_HISTORY / sid
+    saved = snapshot / "backup" / DEV_STAGE.relative_to("/")
+    if snapshot.is_symlink() or not snapshot.is_dir() or (snapshot / "failed").exists() \
+            or not (snapshot / "backup" / DEV_SITE.relative_to("/") /
+                    "wordpress/wp-config.php").is_file():
+        raise RuntimeError("Dev WordPress snapshot incomplete")
+    expected = (saved / "wordpress.sql.gz.sha256").read_text().split()[0]
+    if dump_hash(saved / "wordpress.sql.gz") != expected or \
+            dump_hash(DEV_STAGE / "wordpress.sql.gz") != expected or \
+            (saved / "captured-at").read_bytes() != (DEV_STAGE / "captured-at").read_bytes():
+        raise RuntimeError("Dev WordPress snapshot database capture mismatch")
+    records = STATE / "dev-verified"
+    records.mkdir(mode=0o700, exist_ok=True)
+    write_json(records / (sid + ".json"),
+               {"snapshot": sid, "captured": (saved / "captured-at").read_text().strip(),
+                "dump_sha256": expected, "consistency": "online-files-and-db-may-differ"})
+    write_json(STATE / "dev-last-success.json",
+               {"snapshot": sid, "captured": (saved / "captured-at").read_text().strip()})
+    ids = [path.stem for path in records.glob("*.json")
+           if SID.fullmatch(path.stem) and (DEV_HISTORY / path.stem).is_dir()]
+    keep = retained(ids) | {sid}
+    config = snapshot / "config"
+    if not config.is_file():
+        raise RuntimeError("Dev WordPress saved profile missing; retention refused")
+    with BACKUP_LOCK.open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        for old in sorted(set(ids) - keep):
+            path = DEV_HISTORY / old
+            if path.is_symlink():
+                raise RuntimeError("Refusing symlink during dev retention")
+            run("backintime", "--config", str(config), "--profile", "1",
+                "remove", "--skip-confirmation", old)
+            if path.exists():
+                raise RuntimeError("Back In Time did not remove dev snapshot: " + old)
+            (records / (old + ".json")).unlink()
+    print("Dev WordPress online snapshot verified: " + sid, flush=True)
 
 
 def cycle():
@@ -257,6 +308,7 @@ def cycle():
     write_json(STATE / "verified" / (final + ".json"), record)
     write_json(STATE / "last-success.json", record)
     prune()
+    backup_dev()
 
 
 def alert(status, message):
@@ -338,7 +390,8 @@ def install():
         if not shutil.which(command):
             raise RuntimeError("Missing command: " + command)
     INSTALL.mkdir(mode=0o700, parents=True, exist_ok=True)
-    for name in (Path(__file__).name, "backintime-beelink.sh", "backintime-online-beelink.sh"):
+    for name in (Path(__file__).name, "backintime-beelink.sh",
+                 "backintime-online-beelink.sh", "backup-dev-wordpress-beelink.sh"):
         source = ROOT / name
         if source.resolve() != (INSTALL / name).resolve():
             run("install", "-o", "root", "-g", "root", "-m", "0700",

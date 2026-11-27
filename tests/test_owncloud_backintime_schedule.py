@@ -1,4 +1,5 @@
 import datetime as dt
+import hashlib
 import importlib.util
 from pathlib import Path
 import tempfile
@@ -13,6 +14,62 @@ spec.loader.exec_module(schedule)
 
 
 class ScheduleTest(unittest.TestCase):
+    def test_dev_verification_and_retention_only_delete_managed_snapshots(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = root / "state"
+            history = root / "history"
+            stage = root / "stage"
+            state.mkdir()
+            history.mkdir()
+            stage.mkdir()
+            site = Path("/test/wordpress-site")
+            latest = "20261127-230000-001"
+            old = "20200101-000000-001"
+            unknown = "20190101-000000-001"
+            for sid in (latest, old, unknown):
+                (history / sid).mkdir()
+            (history / "last_snapshot").symlink_to(latest)
+            snapshot = history / latest
+            (snapshot / "config").touch()
+            web = snapshot / "backup" / site.relative_to("/") / "wordpress"
+            web.mkdir(parents=True)
+            (web / "wp-config.php").touch()
+            saved = snapshot / "backup" / stage.relative_to("/")
+            saved.mkdir(parents=True)
+            for dest in (stage, saved):
+                (dest / "wordpress.sql.gz").write_bytes(b"database")
+                (dest / "captured-at").write_text("2026-11-27T23:00:00+0100")
+            (saved / "wordpress.sql.gz.sha256").write_text(
+                hashlib.sha256(b"database").hexdigest() + "  dump\n")
+            records = state / "dev-verified"
+            records.mkdir()
+            (records / (old + ".json")).touch()
+            for day in range(1, 8):
+                sid = f"202611{27 - day:02}-230000-001"
+                (history / sid).mkdir()
+                (records / (sid + ".json")).touch()
+            for sid in ("20261027-230000-001", "20260927-230000-001"):
+                (history / sid).mkdir()
+                (records / (sid + ".json")).touch()
+
+            def remove(*args):
+                self.assertNotEqual(args[-1], latest)
+                self.assertNotEqual(args[-1], unknown)
+                (history / args[-1]).rmdir()
+
+            with patch.object(schedule, "STATE", state), \
+                    patch.object(schedule, "DEV_HISTORY", history), \
+                    patch.object(schedule, "DEV_STAGE", stage), \
+                    patch.object(schedule, "DEV_SITE", site), \
+                    patch.object(schedule, "BACKUP_LOCK", root / "lock"), \
+                    patch.object(schedule, "run_phase"), \
+                    patch.object(schedule, "run", side_effect=remove):
+                schedule.backup_dev()
+            self.assertTrue((records / (latest + ".json")).is_file())
+            self.assertTrue((history / unknown).exists())
+            self.assertFalse((history / old).exists())
+
     def test_cycle_promotes_only_successful_fresh_final(self):
         class Night(dt.datetime):
             @classmethod
@@ -37,11 +94,13 @@ class ScheduleTest(unittest.TestCase):
                         [baseline, preliminary], [baseline, preliminary, final],
                     ]), \
                     patch.object(schedule, "run_phase") as phase, \
+                    patch.object(schedule, "backup_dev") as dev, \
                     patch.object(schedule, "verify", return_value={"snapshot": final}) as verify:
                 schedule.cycle()
                 self.assertEqual(phase.call_count, 2)
                 self.assertEqual(phase.call_args.args[-1], 900)
                 verify.assert_called_once_with(final, current=True)
+                dev.assert_called_once()
             self.assertTrue((state / "verified" / (final + ".json")).is_file())
             self.assertFalse((state / "verified" / (preliminary + ".json")).exists())
 
