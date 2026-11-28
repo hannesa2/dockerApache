@@ -369,6 +369,16 @@ wake, as well as after a same-day recorded post-jobs sleep request. At and after
 02:44, an unreachable mac2016 without such a request is a failure; a reachable
 mac2016 with broken Docker services remains a failure at any time. Local
 beelink checks continue regardless of the mac2016 sleep state.
+The optional `mac2016-night-wake.py --install-sleep-watchdog` installs a local
+five-minute LaunchAgent. Only after a successful nightly sleep request, and only
+on the same day after 04:50, may it return a background-woken Mac to sleep.
+It requires at least 30 minutes HID idle time and no active user/system/idle
+sleep-prevention assertions. A full/user wake cancels automatic resleep for
+that session; missing or ambiguous evidence never triggers sleep. The next
+nightly wake clears the authorization. No remote polling is needed to resleep.
+At AC power, disabling `powernap`, `womp` and `proximitywake` reduces unwanted
+wakes without altering the explicit scheduled wake. These power settings require
+local administrator approval; retain `pmset -g custom` before changing them.
 Availability emails include plain-text and HTML alternatives; `FAIL|` markers
 are bold in HTML-capable mail clients. The companion
 `monitoring/send-health-mail.py` submits both parts through `/usr/sbin/sendmail`.

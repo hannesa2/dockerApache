@@ -17,7 +17,8 @@ SPEC.loader.exec_module(WAKE)
 
 class NightWakeTest(unittest.TestCase):
     def test_wake_starts_indefinite_session_and_checks_closed_display(self):
-        with patch.object(WAKE.subprocess, "run") as run:
+        with patch.object(WAKE.subprocess, "run") as run, \
+                patch.object(WAKE, "SLEEP_STATE") as state:
             WAKE.wake()
         args, kwargs = run.call_args
         self.assertIn("duration:0, interval:0", args[0][2])
@@ -61,7 +62,10 @@ class NightWakeTest(unittest.TestCase):
         self.assertTrue(popen.call_args.kwargs["start_new_session"])
 
     def test_sleep_now_delays_sleep_until_ssh_can_return(self):
-        with patch.object(WAKE.socket, "gethostname", return_value="mac2016"), \
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(WAKE, "SLEEP_STATE", Path(temporary) / "state"), \
+                patch.object(WAKE, "idle_background_wake", return_value=True), \
+                patch.object(WAKE.socket, "gethostname", return_value="mac2016"), \
                 patch.object(WAKE.time, "sleep") as sleep, \
                 patch.object(WAKE, "check_standby") as check, \
                 patch.object(WAKE.subprocess, "run") as run:
@@ -70,6 +74,45 @@ class NightWakeTest(unittest.TestCase):
         check.assert_called_once()
         self.assertIn("end session", " ".join(run.call_args_list[0].args[0]))
         self.assertEqual(run.call_args_list[1].args[0], ["/usr/bin/pmset", "sleepnow"])
+
+    def test_idle_requires_known_idle_time_and_no_user_assertions(self):
+        assertions = ("UserIsActive 0\nPreventSystemSleep 0\n"
+                      "PreventUserIdleSystemSleep 0\n")
+        for idle, status, expected in (
+            ('"HIDIdleTime" = 3600000000000', assertions, True),
+            ('"HIDIdleTime" = 100', assertions, False),
+            ('unknown', assertions, False),
+            ('"HIDIdleTime" = 3600000000000',
+             assertions.replace("UserIsActive 0", "UserIsActive 1"), False),
+        ):
+            with self.subTest(idle=idle, status=status), \
+                    patch.object(WAKE.subprocess, "check_output",
+                                 side_effect=[idle, status]):
+                self.assertEqual(WAKE.idle_background_wake(), expected)
+
+    def test_watchdog_only_resleeps_dark_wake_and_cancels_full_wake(self):
+        now = dt.datetime.now().astimezone()
+        requested = now.replace(hour=4, minute=50, second=0, microsecond=0)
+        class FixedDateTime(dt.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return requested.replace(hour=8)
+        for kind, expected in (("DarkWake", True), ("Wake", False)):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temporary:
+                state = Path(temporary) / "state"
+                state.write_text(requested.isoformat())
+                event = requested.replace(hour=7).strftime("%Y-%m-%d %H:%M:%S %z")
+                with patch.object(WAKE, "SLEEP_STATE", state), \
+                        patch.object(WAKE.dt, "datetime", FixedDateTime), \
+                        patch.object(WAKE.socket, "gethostname", return_value="mac2016"), \
+                        patch.object(WAKE, "idle_background_wake", return_value=True), \
+                        patch.object(WAKE, "check_standby"), \
+                        patch.object(WAKE.subprocess, "check_output",
+                                     return_value=event + f" {kind} from Deep Idle"), \
+                        patch.object(WAKE.subprocess, "run") as run:
+                    WAKE.sleep_watchdog()
+                    self.assertEqual(run.called, expected)
+                    self.assertEqual(state.exists(), expected)
 
     def test_standby_requires_recent_snapshot_and_unlocked_snapshot_job(self):
         now = dt.datetime(2026, 11, 22, 12, 0, 0, tzinfo=dt.timezone.utc)
